@@ -9,9 +9,12 @@ __pycache__/
 *.pyo                # Ignore optimized compiled Python files
 *.pyd                # Ignore Windows specific Python extension files
 env_ossc/
-.venv/
+venv/
 *.swp
 logs/
 *logs/*.err
 *logs/*.out
 data/temp_output/
+out_for_1.txt
+out_for_2.txt
+ehtest/

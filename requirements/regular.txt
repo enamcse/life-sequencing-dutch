@@ -102,7 +102,7 @@ intervaltree==3.1.0
 intreehooks==1.0
 ipaddress==1.0.23
 ipykernel==6.29.5
-ipython==9.0.1
+ipython<9
 ipython_pygments_lexers==1.1.1
 ipywidgets==8.1.5
 isoduration==20.11.0

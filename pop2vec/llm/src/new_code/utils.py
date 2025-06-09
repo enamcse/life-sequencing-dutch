@@ -169,7 +169,7 @@ def _replace_less_frequent_special_values(
   # Mask for top_n frequent keys
   mask_top = column_data.isin(top_frequent_keys)
   # Mask for other keys in `replacements` but not in top_n
-  mask_other_replacements = column_data.isin(replacements.keys()) & ~mask_top
+  mask_other_replacements = column_data.isin(special_values.keys()) & ~mask_top
 
   # Step 4: Perform vectorized replacements
   result = column_data.where(~mask_top, column_data.map(special_values))         # Replace top_n keys
@@ -201,7 +201,7 @@ def _load_parquet_and_transform_data(
       continue
     col_type = row['Type']
     value_labels = row[
-      'Value Labels' if 'Value Labels' in metadata_df.columns else 'ValueLabels'
+      'Value Labels' if 'Value Labels' in metadata_df.columns else 'ValueLabels' 
     ]
     special_values = ast.literal_eval(value_labels)  # Convert string to dictionary
     if 0 not in special_values:
