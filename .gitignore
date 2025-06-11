@@ -17,4 +17,5 @@ logs/
 data/temp_output/
 out_for_1.txt
 out_for_2.txt
-ehtest/models/2020_medium/*.ckpt
+ehtest
+/models/2020_medium/*.ckpt
