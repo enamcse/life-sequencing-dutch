@@ -1,9 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=pretrain_medium
-#SBATCH --output=/home/ehassan/pretrain_out.txt
-#SBATCH --error=/home/ehassan/pretrain_err.txt
+#SBATCH -o /home/ehassan/logs/pretrain_%x.%j.out
+#SBATCH -e /home/ehassan/logs/pretrain_%x.%j.err
+#SBATCH --ntasks-per-node=1
+#SBATCH --nodes=1
+# #SBATCH -p comp_env       # Not sure if there is any partition defined by the admin
 #SBATCH --time=0-12:00:00
-#SBATCH --mem=32000
+#SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 
 
