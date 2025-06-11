@@ -2,6 +2,6 @@
   "HPARAMS_PATH": "pop2vec/llm/src/new_code/regular_hparams_medium.txt",
   "CHECKPOINT_DIR": "models/2020_medium/",   
   "MLM_PATH": "encoded.h5",
-  "NUM_VAL_ITEMS": 400000,
-  "VOCAB_PATH": "vocab.csv",
+  "NUM_VAL_ITEMS": 1000,
+  "VOCAB_PATH": "vocab.csv"
 }

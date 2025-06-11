@@ -113,7 +113,7 @@ Jinja2==3.1.2
 joblib==1.2.0
 json5==0.10.0
 jsonpointer==3.0.0
-jsonschema==4.17.3
+jsonschema>=4.18.0
 jsonschema-specifications==2024.10.1
 jupyter==1.1.1
 jupyter-console==6.6.3
@@ -203,7 +203,6 @@ polars==1.23.0
 pooch==1.7.0
 prometheus_client==0.21.1
 prompt_toolkit==3.0.50
-protobuf==4.24.0
 psutil==5.9.5
 ptyprocess==0.7.0
 pure_eval==0.2.3
