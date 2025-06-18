@@ -1,0 +1,14 @@
+{
+  "DATA_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step3/",
+  "SEQUENCE_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step4/sequences.parquet",
+  "VOCAB_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step5/vocab_v0.csv",
+  "ENCODING_WRITE_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step5/",
+  "DO_MLM": true,
+  "PRIMARY_KEY": "RINPERSOON",
+  "VOCAB_NAME": "vocab_v0",
+  "TIME_RANGE_END": 16438,
+  "MAX_SEQ_LEN": 512,
+  "LOAD_VOCAB": false,
+  "PARALLEL": true,
+  "MASKING": "random"
+ }
