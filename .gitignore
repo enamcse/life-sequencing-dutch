@@ -19,3 +19,6 @@ out_for_1.txt
 out_for_2.txt
 ehtest
 /models/2020_medium/*.ckpt
+/fake_data_v0/
+tree.txt
+pipe_test_eh/fake_rinpersoons.csv

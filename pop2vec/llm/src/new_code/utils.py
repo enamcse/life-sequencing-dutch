@@ -268,7 +268,7 @@ def load_parquet_with_metadata(
 
 def get_column_names(file, delimiter=','):
   if file.endswith('.csv'):
-    return pd.read_csv(csv_file, delimiter=delimiter, nrows=2).columns.tolist()
+    return pd.read_csv(file, delimiter=delimiter, nrows=2).columns.tolist()
   elif file.endswith('.parquet'):
     return pyarrow.parquet.ParquetFile(file).schema.names
   else:
