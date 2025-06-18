@@ -4,8 +4,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --time=03:00:00
-#SBATCH --output=logs/%x.%j.out
-#SBATCH --error=logs/%x.%j.err
+#SBATCH --output=~/life-sequencing-dutch/logs/%x.%j.out
+#SBATCH --error=~/life-sequencing-dutch/logs/%x.%j.err
 # #SBATCH -e logs/%x.%j.err
 # #SBATCH -o logs/%x.%j.out
 # #SBATCH --partition=rome
