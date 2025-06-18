@@ -3,8 +3,8 @@
 #SBATCH --job-name=preprocess
 #SBATCH --output=/home/ehassan/preprocess_out.txt
 #SBATCH --error=/home/ehassan/preprocess_err.txt
-# #SBATCH --ntasks-per-node=1
-# #SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --nodes=1
 #SBATCH --time=0-12:00:00
 # #SBATCH --output=~/life-sequencing-dutch/logs/%x.%j.out
 # #SBATCH --error=~/life-sequencing-dutch/logs/%x.%j.err
