@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 #SBATCH --job-name=preprocess
-#SBATCH -e ~/logs/%x.%j.err
-#SBATCH -o ~/logs/%x.%j.out
+#SBATCH -e /home/ehassan/logs/%x.%j.err
+#SBATCH -o /home/ehassan/logs/%x.%j.out
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --time=3:00:00
@@ -14,7 +14,8 @@ echo "job started"
 date
 pwd
 echo ~
-source pipe_test_eh/load_sbu_venv.sh
-python -m pipe_test_eh.s3_preprocess_data pipe_test_eh/s3_preprocess_cfg.json
+# source pipe_test_eh/load_sbu_venv.sh
+# python -m pipe_test_eh.s3_preprocess_data pipe_test_eh/s3_preprocess_cfg.json
+cat ~/pretrain_err.txt 
 
 echo "job ended successfully"
