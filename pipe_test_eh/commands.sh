@@ -1,4 +1,6 @@
 # Generate Step 1 data: Run from pipe_test_eh directory
+# SBU AI cluster gave error due to capitalization of the file name fake_rinpersoon.csv but my local system did not.
+mkdir step1
 python s1_generate_step1_data.py
 
 # Generate Step 2 data

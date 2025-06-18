@@ -13,7 +13,7 @@ echo "job started"
 
 date
 pwd
-# source requirements/load_venv.sh
+source load_sbu_venv.sh
 python -m pipe_test_eh.preprocess_data pipe_test_eh/s3_preprocess_cfg.json
 
 echo "job ended successfully"
