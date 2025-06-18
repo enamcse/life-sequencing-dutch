@@ -112,7 +112,7 @@ def process_files(columns_dict):
 if __name__ == '__main__':
     dir_path = 'empty_files/'  # Replace with your actual directory path
     columns_dict = {}
-    RINPERSOONS_PATH = 'fake_RINPERSOONS.csv'
+    RINPERSOONS_PATH = 'fake_rinpersoons.csv'
 
     for file_name in os.listdir(dir_path):
         if file_name.endswith('.csv'):
