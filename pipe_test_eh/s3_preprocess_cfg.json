@@ -1,6 +1,6 @@
 {
-  "SOURCE": "~/life-sequencing-dutch/pipe_test_eh/step2",
-  "DEST": "~/life-sequencing-dutch/pipe_test_eh/step3",
+  "SOURCE": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step2",
+  "DEST": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step3",
   "PRIMARY_KEY": "RINPERSOON",
   "RESTRICTED_SUBSTRINGS": ["RINPERSOON2"],
   "CATEGORICAL_THRESHOLD": 100,
