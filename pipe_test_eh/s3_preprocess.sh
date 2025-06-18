@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 #SBATCH --job-name=preprocess
-#SBATCH -e ~/logs/%x.%j.err
-#SBATCH -o ~/logs/%x.%j.out
+#SBATCH -e /home/ehassan/logs/%x.%j.err
+#SBATCH -o /home/ehassan/logs/%x.%j.out
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --time=3:00:00
