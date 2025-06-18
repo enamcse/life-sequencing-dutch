@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 #SBATCH --job-name=preprocess
-#SBATCH --output=/home/ehassan/test.out
-#SBATCH --error=/home/ehassan/logs/test.err
+#SBATCH --output=/home/ehassan/life-sequencing-dutch/logs/test.out
+#SBATCH --error=/home/ehassan/life-sequencing-dutch/logs/test.err
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --time=0-12:00:00
