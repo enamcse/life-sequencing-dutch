@@ -1,15 +1,17 @@
 #!/bin/bash
 #
 #SBATCH --job-name=preprocess
-#SBATCH --ntasks-per-node=1
-#SBATCH --nodes=1
-#SBATCH --time=03:00:00
-#SBATCH --output=~/life-sequencing-dutch/logs/%x.%j.out
-#SBATCH --error=~/life-sequencing-dutch/logs/%x.%j.err
+#SBATCH --output=/home/ehassan/pretrain_out.txt
+#SBATCH --error=/home/ehassan/pretrain_err.txt
+# #SBATCH --ntasks-per-node=1
+# #SBATCH --nodes=1
+#SBATCH --time=0-12:00:00
+# #SBATCH --output=~/life-sequencing-dutch/logs/%x.%j.out
+# #SBATCH --error=~/life-sequencing-dutch/logs/%x.%j.err
 # #SBATCH -e logs/%x.%j.err
 # #SBATCH -o logs/%x.%j.out
 # #SBATCH --partition=rome
-#SBATCH --mem=30G
+#SBATCH --mem=32G
 
 echo "job started"
 
