@@ -13,6 +13,7 @@ echo "job started"
 
 date
 pwd
+echo ~
 source pipe_test_eh/load_sbu_venv.sh
 python -m pipe_test_eh.s3_preprocess_data pipe_test_eh/s3_preprocess_cfg.json
 
