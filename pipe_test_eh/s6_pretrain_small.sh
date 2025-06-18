@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --time=100:00:00
 #SBATCH --mem=80G
-#SBATCH -p gpu
+# #SBATCH -p gpu
 #SBATCH --gpus-per-node=1
 #SBATCH -e /home/ehassan/logs/%x.%j.err
 #SBATCH -o /home/ehassan/logs/%x.%j.out
