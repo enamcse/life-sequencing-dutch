@@ -1,0 +1,8 @@
+{
+  "HPARAMS_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/s6_regular_hparams_small.txt",
+  "CHECKPOINT_DIR": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/",   
+  "MLM_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step5/encoding=mlm/masking=random/encoded.h5",
+  "MAX_EPOCHS": 1,
+  "BATCH_SIZE": 16,
+  "NUM_VAL_ITEMS": 1000
+}
