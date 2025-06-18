@@ -1,17 +1,17 @@
 import pandas as pd
+import numpy as np
 from pathlib import Path
 import json
 
-# Load file
 seq_file = Path("pipe_test_eh/step4/sequences.parquet")
+
 try:
     df = pd.read_parquet(seq_file)
     print(f"\n✅ Loaded {seq_file.name}")
     print(f"Total rows: {len(df)}")
     print("Columns:", df.columns.tolist())
 
-    # Filter rows with non-empty sequences
-    df_filtered = df[df["sentence"].apply(lambda x: bool(x) and isinstance(x, list) and len(x) > 0)]
+    df_filtered = df[df["sentence"].apply(lambda x: isinstance(x, (list, np.ndarray)) and len(x) > 0)]
 
     print(f"\n🔍 Found {len(df_filtered)} rows with non-empty sequences.\n")
     print("Showing up to 3 valid example sequences:\n")
