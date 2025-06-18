@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 #SBATCH --job-name=preprocess
-#SBATCH --output=/home/ehassan/pretrain_out.txt
-#SBATCH --error=/home/ehassan/pretrain_err.txt
+#SBATCH --output=/home/ehassan/preprocess_out.txt
+#SBATCH --error=/home/ehassan/preprocess_err.txt
 # #SBATCH --ntasks-per-node=1
 # #SBATCH --nodes=1
 #SBATCH --time=0-12:00:00
