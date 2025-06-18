@@ -1,6 +1,6 @@
 {
   "SOURCE": "~/life-sequence-dutch/fake_data_v0/step2",
-  "DEST": "~/life-sequence-dutch//fake_data_v0/step3",
+  "DEST": "~/life-sequence-dutch/fake_data_v0/step3",
   "PRIMARY_KEY": "RINPERSOON",
   "RESTRICTED_SUBSTRINGS": ["RINPERSOON2"],
   "CATEGORICAL_THRESHOLD": 100,
