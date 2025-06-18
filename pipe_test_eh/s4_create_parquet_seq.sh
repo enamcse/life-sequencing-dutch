@@ -6,8 +6,8 @@
 #SBATCH --time=01:30:00
 #SBATCH --mem=30G
 # #SBATCH -p rome 
-#SBATCH -e /home/ehassan/logs/%x.%j-s4.err
-#SBATCH -o /home/ehassan/logs/%x.%j-s4.out
+#SBATCH -e /home/ehassan/logs/%x.%j.err
+#SBATCH -o /home/ehassan/logs/%x.%j.out
 
 echo "job started"
 

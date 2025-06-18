@@ -1,6 +1,7 @@
 {
   "DATA_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step3",
   "SEQUENCE_WRITE_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step4/people.parquet",
+  "SEQUENCE_WRITE_DIR": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step4",
   "VOCAB_WRITE_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step4/vocab.csv",
   "PRIMARY_KEY": "RINPERSOON",
   "VOCAB_NAME": "fake_vocab"
