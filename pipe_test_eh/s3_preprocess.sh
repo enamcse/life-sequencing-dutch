@@ -4,8 +4,10 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --time=03:00:00
-#SBATCH -e logs/%x.%j.err
-#SBATCH -o logs/%x.%j.out
+#SBATCH --output=logs/%x.%j.out
+#SBATCH --error=logs/%x.%j.err
+# #SBATCH -e logs/%x.%j.err
+# #SBATCH -o logs/%x.%j.out
 # #SBATCH --partition=rome
 #SBATCH --mem=30G
 
