@@ -4,7 +4,7 @@
 python pipe_test_eh/s1_generate_step1_data.py
 
 # Generate Step 2 data
-python pipe_test_eh/s2_subset_data_by_columns.py step1 step2 s1_to_s2_column_list.txt
+python pipe_test_eh/s2_subset_data_by_columns.py pipe_test_eh/step1 pipe_test_eh/step2 pipe_test_eh/s1_to_s2_column_list.txt
 
 # Generate Step 3 data
 sbatch pipe_test_eh/s3_preprocess.sh
