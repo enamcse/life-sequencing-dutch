@@ -22,3 +22,5 @@ ehtest
 /fake_data_v0/
 tree.txt
 pipe_test_eh/fake_rinpersoons.csv
+pipe_test_eh/fake_models_v0/
+pipe_test_eh/step*/
