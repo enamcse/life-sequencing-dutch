@@ -11,6 +11,7 @@ from tqdm import tqdm
 MIN_ROWS = 100000#1_000_000
 MAX_ROWS = 500000#10_000_000
 GENESIS_DATE = pd.Timestamp('1971-12-30')
+OUTPUT_DIR = 'pipe_test_eh/step1'
 
 def generate_random_string(length=5):
     """Generate a random string of fixed length."""
@@ -66,7 +67,7 @@ def generate_random_data(columns, num_rows, name):
 def create_parquet_and_metadata(df, file_name):
     """Save DataFrame as Parquet and create corresponding metadata Parquet."""
     # Save data to Parquet
-    parquet_path = f'step1/{file_name}.parquet'
+    parquet_path = f'{OUTPUT_DIR}/{file_name}.parquet'
     table = pa.Table.from_pandas(df)
     pq.write_table(table, parquet_path)
     
@@ -97,7 +98,7 @@ def create_parquet_and_metadata(df, file_name):
         metadata['ValueLabels'].append(str(value_labels))
     
     metadata_df = pd.DataFrame(metadata)
-    meta_parquet_path = f'step1/{file_name}_meta.parquet'
+    meta_parquet_path = f'{OUTPUT_DIR}/{file_name}_meta.parquet'
     meta_table = pa.Table.from_pandas(metadata_df)
     pq.write_table(meta_table, meta_parquet_path)
     
