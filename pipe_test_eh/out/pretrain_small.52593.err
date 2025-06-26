@@ -1,0 +1,287 @@
+INFO:__main__:config path = pipe_test_eh/s6_pretrain_cfg_small.json
+INFO:pop2vec.llm.src.transformer.transformer_utils:EncoderLayer setup is finised:  0.007 s
+INFO:pop2vec.llm.src.transformer.transformer_utils:EncoderLayer setup is finised:  0.006 s
+INFO:pop2vec.llm.src.transformer.transformer_utils:EncoderLayer setup is finised:  0.006 s
+INFO:pop2vec.llm.src.transformer.models:Training task: mlm
+INFO:pop2vec.llm.src.transformer.transformer:MLM decoder WITH Wight Tying
+INFO:pop2vec.llm.src.transformer.transformer:(MLM Decoder) centering: true normalisation: True
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+IPU available: False, using: 0 IPUs
+HPU available: False, using: 0 HPUs
+INFO:__main__:Starting Trainer.fit(...)
+/home/ehassan/miniconda3/envs/myenv/lib/python3.9/site-packages/pytorch_lightning/callbacks/model_checkpoint.py:653: Checkpoint directory /home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0 exists and is not empty.
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+
+   | Name            | Type                | Params
+---------------------------------------------------------
+0  | transformer     | Transformer         | 1.9 M 
+1  | mlm_decoder     | MaskedLanguageModel | 449 K 
+2  | cls_decoder     | CLS_DecoderS        | 26.2 K
+3  | cls_loss        | CrossEntropyLoss    | 0     
+4  | mlm_loss        | CrossEntropyLoss    | 0     
+5  | train_accuracy  | MulticlassAccuracy  | 0     
+6  | train_precision | MulticlassPrecision | 0     
+7  | train_recall    | MulticlassRecall    | 0     
+8  | train_f1        | MulticlassF1Score   | 0     
+9  | train_cls_acc   | MulticlassAccuracy  | 0     
+10 | train_cls_f1    | MulticlassF1Score   | 0     
+11 | val_accuracy    | MulticlassAccuracy  | 0     
+12 | val_precision   | MulticlassPrecision | 0     
+13 | val_recall      | MulticlassRecall    | 0     
+14 | val_f1          | MulticlassF1Score   | 0     
+15 | val_cls_acc     | MulticlassAccuracy  | 0     
+16 | val_cls_f1      | MulticlassF1Score   | 0     
+---------------------------------------------------------
+2.0 M     Trainable params
+0         Non-trainable params
+2.0 M     Total params
+7.918     Total estimated model params size (MB)
+SLURM auto-requeueing enabled. Setting signal handlers.
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 0:
+14.2348, 16.9852, 3.2333
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 0:
+2067.2239, 2406.7429, 709.1479
+Epoch 0, global step 2109: 'val_loss_track' reached 4.13445 (best 4.13445), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=00-step=2109-val_loss_track=4.13.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 0:
+1640.2730, 1873.1436, 708.7904
+Epoch 0, global step 4218: 'val_loss_track' reached 3.28054 (best 3.28054), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=00-step=4218-val_loss_track=3.28.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 0:
+16889.1517, 19588.1204, 6093.2757
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 1:
+1604.4028, 1828.5299, 707.8944
+Epoch 1, global step 6327: 'val_loss_track' reached 3.20881 (best 3.20881), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=01-step=6327-val_loss_track=3.21.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 1:
+1578.8020, 1796.5773, 707.7008
+Epoch 1, global step 8436: 'val_loss_track' reached 3.15760 (best 3.15760), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=01-step=8436-val_loss_track=3.16.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 1:
+13466.9817, 15330.3047, 6013.6887
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 2:
+1554.4431, 1765.9621, 708.3671
+Epoch 2, global step 10545: 'val_loss_track' reached 3.10889 (best 3.10889), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=02-step=10545-val_loss_track=3.11.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 2:
+1542.3315, 1751.0031, 707.6449
+Epoch 2, global step 12654: 'val_loss_track' reached 3.08466 (best 3.08466), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=02-step=12654-val_loss_track=3.08.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 2:
+13045.6150, 14809.1328, 5991.5428
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 3:
+1531.0145, 1736.8488, 707.6773
+Epoch 3, global step 14763: 'val_loss_track' reached 3.06203 (best 3.06203), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=03-step=14763-val_loss_track=3.06.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 3:
+1521.1935, 1724.6038, 707.5522
+Epoch 3, global step 16872: 'val_loss_track' reached 3.04239 (best 3.04239), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=03-step=16872-val_loss_track=3.04.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 3:
+12784.1458, 14482.9080, 5989.0964
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 4:
+1515.2294, 1717.1057, 707.7240
+Epoch 4, global step 18981: 'val_loss_track' reached 3.03046 (best 3.03046), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=04-step=18981-val_loss_track=3.03.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 4:
+1509.7733, 1709.9802, 708.9457
+Epoch 4, global step 21090: 'val_loss_track' reached 3.01955 (best 3.01955), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=04-step=21090-val_loss_track=3.02.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 4:
+12616.6069, 14274.9453, 5983.2522
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 5:
+1508.0508, 1708.0911, 707.8894
+Epoch 5, global step 23199: 'val_loss_track' reached 3.01610 (best 3.01610), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=05-step=23199-val_loss_track=3.02.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 5:
+1503.5536, 1702.5225, 707.6779
+Epoch 5, global step 25308: 'val_loss_track' reached 3.00711 (best 3.00711), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=05-step=25308-val_loss_track=3.01.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 5:
+12513.6614, 14146.5523, 5982.0967
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 6:
+1496.8477, 1694.0904, 707.8767
+Epoch 6, global step 27417: 'val_loss_track' reached 2.99370 (best 2.99370), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=06-step=27417-val_loss_track=2.99.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 6:
+1491.5946, 1687.5634, 707.7194
+Epoch 6, global step 29526: 'val_loss_track' reached 2.98319 (best 2.98319), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=06-step=29526-val_loss_track=2.98.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 6:
+12413.2819, 14020.6465, 5983.8225
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 7:
+1487.7784, 1682.8593, 707.4547
+Epoch 7, global step 31635: 'val_loss_track' reached 2.97555 (best 2.97555), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=07-step=31635-val_loss_track=2.98.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 7:
+1481.9603, 1675.5451, 707.6209
+Epoch 7, global step 33744: 'val_loss_track' reached 2.96392 (best 2.96392), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=07-step=33744-val_loss_track=2.96.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 7:
+12313.0639, 13895.4619, 5983.4707
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 8:
+1481.8170, 1675.3967, 707.4984
+Epoch 8, global step 35853: 'val_loss_track' reached 2.96363 (best 2.96363), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=08-step=35853-val_loss_track=2.96.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 8:
+1478.5933, 1671.2807, 707.8436
+Epoch 8, global step 37962: 'val_loss_track' reached 2.95718 (best 2.95718), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=08-step=37962-val_loss_track=2.96.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 8:
+12236.6794, 13799.7679, 5984.3248
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 9:
+1478.0457, 1670.6180, 707.7562
+Epoch 9, global step 40071: 'val_loss_track' reached 2.95609 (best 2.95609), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=09-step=40071-val_loss_track=2.96.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 9:
+1476.0878, 1668.2006, 707.6362
+Epoch 9, global step 42180: 'val_loss_track' reached 2.95218 (best 2.95218), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=09-step=42180-val_loss_track=2.95.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 9:
+12188.5841, 13740.3472, 5981.5310
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 10:
+1475.1176, 1666.9883, 707.6347
+Epoch 10, global step 44289: 'val_loss_track' reached 2.95023 (best 2.95023), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=10-step=44289-val_loss_track=2.95.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 10:
+1474.4682, 1666.2076, 707.5107
+Epoch 10, global step 46398: 'val_loss_track' reached 2.94894 (best 2.94894), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=10-step=46398-val_loss_track=2.95.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 10:
+12148.2958, 13689.5071, 5983.4498
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 11:
+1474.3313, 1666.0307, 707.5337
+Epoch 11, global step 48507: 'val_loss_track' reached 2.94866 (best 2.94866), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=11-step=48507-val_loss_track=2.95.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 11:
+1471.2630, 1662.0807, 707.9925
+Epoch 11, global step 50616: 'val_loss_track' reached 2.94253 (best 2.94253), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=11-step=50616-val_loss_track=2.94.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 11:
+12113.8524, 13645.8811, 5985.7368
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 12:
+1471.7709, 1662.8708, 707.3712
+Epoch 12, global step 52725: 'val_loss_track' reached 2.94354 (best 2.94253), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=12-step=52725-val_loss_track=2.94.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 12:
+1468.3038, 1658.2753, 708.4174
+Epoch 12, global step 54834: 'val_loss_track' reached 2.93661 (best 2.93661), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=12-step=54834-val_loss_track=2.94.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 12:
+12072.8126, 13595.7771, 5980.9537
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 13:
+1467.3453, 1657.2812, 707.6017
+Epoch 13, global step 56943: 'val_loss_track' reached 2.93469 (best 2.93469), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=13-step=56943-val_loss_track=2.93.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 13:
+1465.0715, 1654.4280, 707.6456
+Epoch 13, global step 59052: 'val_loss_track' reached 2.93014 (best 2.93014), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=13-step=59052-val_loss_track=2.93.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 13:
+12029.6088, 13541.9604, 5980.2013
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 14:
+1465.4536, 1654.7729, 708.1763
+Epoch 14, global step 61161: 'val_loss_track' reached 2.93091 (best 2.93014), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=14-step=61161-val_loss_track=2.93.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 14:
+1463.9526, 1652.8690, 708.2872
+Epoch 14, global step 63270: 'val_loss_track' reached 2.92790 (best 2.92790), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=14-step=63270-val_loss_track=2.93.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 14:
+12004.3159, 13510.4787, 5979.6640
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 15:
+1464.3257, 1653.5578, 707.3972
+Epoch 15, global step 65379: 'val_loss_track' reached 2.92865 (best 2.92790), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=15-step=65379-val_loss_track=2.93.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 15:
+1461.6442, 1650.1713, 707.5356
+Epoch 15, global step 67488: 'val_loss_track' reached 2.92329 (best 2.92329), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=15-step=67488-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 15:
+11975.8980, 13475.3814, 5977.9632
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 16:
+1462.1974, 1650.7878, 707.8359
+Epoch 16, global step 69597: 'val_loss_track' reached 2.92440 (best 2.92329), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=16-step=69597-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 16:
+1460.6353, 1648.8269, 707.8689
+Epoch 16, global step 71706: 'val_loss_track' reached 2.92127 (best 2.92127), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=16-step=71706-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 16:
+11946.8471, 13439.5101, 5976.1943
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 17:
+1460.7450, 1649.0378, 707.5735
+Epoch 17, global step 73815: 'val_loss_track' reached 2.92149 (best 2.92127), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=17-step=73815-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 17:
+1459.5450, 1647.4222, 708.0364
+Epoch 17, global step 75924: 'val_loss_track' reached 2.91909 (best 2.91909), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=17-step=75924-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 17:
+11926.9670, 13413.4001, 5981.2334
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 18:
+1460.2618, 1648.4441, 707.5324
+Epoch 18, global step 78033: 'val_loss_track' reached 2.92052 (best 2.91909), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=18-step=78033-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 18:
+1458.9178, 1646.7866, 707.4423
+Epoch 18, global step 80142: 'val_loss_track' reached 2.91784 (best 2.91784), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=18-step=80142-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 18:
+11904.8464, 13386.4476, 5978.4404
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 19:
+1459.5448, 1647.5788, 707.4087
+Epoch 19, global step 82251: 'val_loss_track' reached 2.91909 (best 2.91784), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=19-step=82251-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 19:
+1458.0221, 1645.4769, 708.2026
+Epoch 19, global step 84360: 'val_loss_track' reached 2.91604 (best 2.91604), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=19-step=84360-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 19:
+11880.4293, 13355.7927, 5978.9746
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 20:
+1457.6759, 1645.2222, 707.4903
+Epoch 20, global step 86469: 'val_loss_track' reached 2.91535 (best 2.91535), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=20-step=86469-val_loss_track=2.92.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 20:
+1456.4596, 1643.6965, 707.5117
+Epoch 20, global step 88578: 'val_loss_track' reached 2.91292 (best 2.91292), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=20-step=88578-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 20:
+11866.4920, 13336.8664, 5984.9932
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 21:
+1456.8455, 1644.1678, 707.5561
+Epoch 21, global step 90687: 'val_loss_track' reached 2.91369 (best 2.91292), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=21-step=90687-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 21:
+1455.7935, 1642.8572, 707.5386
+Epoch 21, global step 92796: 'val_loss_track' reached 2.91159 (best 2.91159), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=21-step=92796-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 21:
+11847.3480, 13314.7518, 5977.7321
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 22:
+1455.4918, 1642.4321, 707.7306
+Epoch 22, global step 94905: 'val_loss_track' reached 2.91098 (best 2.91098), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=22-step=94905-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 22:
+1455.8692, 1642.9832, 707.4128
+Epoch 22, global step 97014: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 22:
+11838.3335, 13302.5470, 5981.4785
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 23:
+1455.2782, 1642.2487, 707.3959
+Epoch 23, global step 99123: 'val_loss_track' reached 2.91056 (best 2.91056), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=23-step=99123-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 23:
+1454.6118, 1641.3555, 707.6369
+Epoch 23, global step 101232: 'val_loss_track' reached 2.90922 (best 2.90922), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=23-step=101232-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 23:
+11823.9548, 13285.0719, 5979.4854
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 24:
+1454.7301, 1641.5587, 707.4155
+Epoch 24, global step 103341: 'val_loss_track' reached 2.90946 (best 2.90922), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=24-step=103341-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 24:
+1454.3487, 1641.0437, 707.5687
+Epoch 24, global step 105450: 'val_loss_track' reached 2.90870 (best 2.90870), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=24-step=105450-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 24:
+11812.0738, 13269.3381, 5983.0154
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 25:
+1454.6379, 1641.4177, 707.5186
+Epoch 25, global step 107559: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 25:
+1454.8488, 1641.7031, 707.4312
+Epoch 25, global step 109668: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 25:
+11799.6471, 13255.3588, 5976.7993
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 26:
+1454.5792, 1641.3588, 707.4610
+Epoch 26, global step 111777: 'val_loss_track' reached 2.90916 (best 2.90870), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=26-step=111777-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 26:
+1454.3914, 1641.1296, 707.4385
+Epoch 26, global step 113886: 'val_loss_track' reached 2.90878 (best 2.90870), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=26-step=113886-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 26:
+11789.5928, 13242.5611, 5977.7188
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 27:
+1454.2775, 1640.9708, 707.5043
+Epoch 27, global step 115995: 'val_loss_track' reached 2.90856 (best 2.90856), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=27-step=115995-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 27:
+1454.2119, 1640.8975, 707.4690
+Epoch 27, global step 118104: 'val_loss_track' reached 2.90842 (best 2.90842), saving model to '/home/ehassan/life-sequencing-dutch/pipe_test_eh/fake_models_v0/model-epoch=27-step=118104-val_loss_track=2.91.ckpt' as top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 27:
+11792.8187, 13246.9687, 5976.2175
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 28:
+1455.4596, 1642.4587, 707.4633
+Epoch 28, global step 120213: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 28:
+1455.0682, 1641.9708, 707.4579
+Epoch 28, global step 122322: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 28:
+11804.4537, 13260.6975, 5979.4775
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 29:
+1454.6627, 1641.4688, 707.4382
+Epoch 29, global step 124431: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total validation,mlm,cls loss after epoch 29:
+1454.5928, 1641.3814, 707.4381
+Epoch 29, global step 126540: 'val_loss_track' was not in top 2
+INFO:pop2vec.llm.src.transformer.models:Total training,mlm,cls loss after epoch 29:
+11796.6373, 13251.5415, 5977.0195
+`Trainer.fit` stopped: `max_epochs=30` reached.
+
+real	103m54.694s
+user	103m39.405s
+sys	10m10.980s
