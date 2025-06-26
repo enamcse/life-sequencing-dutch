@@ -4,6 +4,7 @@
   "MLM_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step5/encoding=mlm/masking=random/encoded.h5",
   "VOCAB_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step5/vocab_v0.csv",
   "EMBEDDING_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step6/embeddings_v0.h5",
+  "OUTPUT_DIR": "/home/ehassan/life-sequencing-dutch/pipe_test_eh",
   "BATCH_SIZE": 256,
   "NUM_VAL_ITEMS": 5000
 }
