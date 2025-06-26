@@ -112,40 +112,52 @@ def get_ddp_strategy():
 # Helper: Save embeddings to an HDF5 file.
 def save_embeddings(model, dataloader, output_path):
     model.eval()
-    all_embeddings = []
-    ids = []
     current_index = 0
 
+    # Get hidden size by doing a single forward pass
+    sample_batch = next(iter(dataloader))
+    batch_on_device = {
+        k: v.to(model.device)
+        for k, v in sample_batch.items()
+        if isinstance(v, torch.Tensor)
+    }
     with torch.no_grad():
-        for batch in dataloader:
-            if current_index == 0:
-                logger.info(f"Available batch keys: {list(batch.keys())}")
+        sample_output = model(batch_on_device)
+    hidden_size = sample_output[0].size(-1)
 
-            # Move tensors to device
-            batch_on_device = {
-                k: v.to(model.device)
-                for k, v in batch.items()
-                if isinstance(v, torch.Tensor)
-            }
+    # Estimate total size (optional fallback to growable if unknown)
+    total_seqs = len(dataloader.dataset)
 
-            outputs = model(batch_on_device)
-            emb = outputs[0][:, 0, :]  # CLS token
-            all_embeddings.append(emb.cpu().numpy())
-
-            # Get IDs
-            if 'sequence_id' in batch:
-                ids.extend(batch['sequence_id'].cpu().numpy())
-            else:
-                num_embs = emb.shape[0]
-                ids.extend(range(current_index, current_index + num_embs))
-                current_index += num_embs
-
-    embs = np.concatenate(all_embeddings, axis=0)
     with h5py.File(output_path, 'w') as f:
-        f.create_dataset("embeddings", data=embs, compression="gzip")
-        f.create_dataset("ids", data=np.array(ids), compression="gzip")
+        emb_ds = f.create_dataset("embeddings", shape=(total_seqs, hidden_size), dtype='float32')
+        id_ds = f.create_dataset("ids", shape=(total_seqs,), dtype='int32')
 
-    logger.info(f"Saved {len(ids)} embeddings to {output_path}")
+        with torch.no_grad():
+            for batch in dataloader:
+                if current_index == 0:
+                    logger.info(f"Available batch keys: {list(batch.keys())}")
+
+                batch_on_device = {
+                    k: v.to(model.device)
+                    for k, v in batch.items()
+                    if isinstance(v, torch.Tensor)
+                }
+
+                outputs = model(batch_on_device)
+                emb = outputs[0][:, 0, :].cpu().numpy()
+
+                batch_size = emb.shape[0]
+                emb_ds[current_index:current_index+batch_size] = emb
+                id_ds[current_index:current_index+batch_size] = (
+                    batch['sequence_id'].cpu().numpy()
+                    if 'sequence_id' in batch
+                    else np.arange(current_index, current_index + batch_size)
+                )
+
+                current_index += batch_size
+
+    logger.info(f"Saved {current_index} embeddings to {output_path}")
+
 
 
 
