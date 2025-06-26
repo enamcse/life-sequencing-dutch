@@ -114,28 +114,39 @@ def save_embeddings(model, dataloader, output_path):
     model.eval()
     all_embeddings = []
     ids = []
+    current_index = 0
+
     with torch.no_grad():
         for batch in dataloader:
-            # Move all tensor fields to device
+            if current_index == 0:
+                logger.info(f"Available batch keys: {list(batch.keys())}")
+
+            # Move tensors to device
             batch_on_device = {
                 k: v.to(model.device)
                 for k, v in batch.items()
                 if isinstance(v, torch.Tensor)
             }
 
-            # Forward pass
             outputs = model(batch_on_device)
-            logger.info(f"Model output type: {type(outputs)}, len: {len(outputs)}")
-
-            # Extract CLS token embeddings
-            emb = outputs[0][:, 0, :]
+            emb = outputs[0][:, 0, :]  # CLS token
             all_embeddings.append(emb.cpu().numpy())
-            ids.extend(batch['sequence_id'].cpu().numpy())
+
+            # Get IDs
+            if 'sequence_id' in batch:
+                ids.extend(batch['sequence_id'].cpu().numpy())
+            else:
+                num_embs = emb.shape[0]
+                ids.extend(range(current_index, current_index + num_embs))
+                current_index += num_embs
 
     embs = np.concatenate(all_embeddings, axis=0)
     with h5py.File(output_path, 'w') as f:
         f.create_dataset("embeddings", data=embs, compression="gzip")
         f.create_dataset("ids", data=np.array(ids), compression="gzip")
+
+    logger.info(f"Saved {len(ids)} embeddings to {output_path}")
+
 
 
 # Main training function.
