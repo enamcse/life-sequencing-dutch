@@ -23,20 +23,21 @@ def benchmark_faiss(embeddings, sizes, output_dir):
             continue
 
         emb_subset = embeddings[:n].astype("float32")
+        
+        start = time.time()
 
         # Build GPU index
         cpu_index = faiss.IndexFlatL2(dim)
         res = faiss.StandardGpuResources()
         gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
 
-        # Time the GPU-based indexing
-        start = time.time()
+        # GPU-based indexing
         gpu_index.add(emb_subset)
         end = time.time()
 
-        build_time = end - start
-        print(f"FAISS GPU indexed {n} embeddings in {build_time:.2f} sec")
-        results.append({"embeddings": n, "build_time_sec": build_time})
+        indexing_time = (end - start) * 1000  # Convert to milliseconds
+        print(f"FAISS GPU indexed {n} embeddings in {indexing_time:.2f} ms")
+        results.append({"embeddings": n, "total_time_ms": indexing_time})
 
     # Save CSV
     df = pd.DataFrame(results)
@@ -45,12 +46,12 @@ def benchmark_faiss(embeddings, sizes, output_dir):
 
     # Save Plot
     plt.figure()
-    plt.plot(df["embeddings"], df["build_time_sec"], marker='o', label="FAISS-GPU")
+    plt.plot(df["embeddings"], df["total_time_ms"], marker='o', label="FAISS-GPU")
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of Embeddings")
-    plt.ylabel("Build Time (seconds)")
-    plt.title("FAISS-GPU Build Time vs Number of Embeddings")
+    plt.ylabel("Total Time (ms)")
+    plt.title("FAISS-GPU Indexing Time vs Number of Embeddings")
     plt.grid(True)
     plt.legend()
     plt.savefig(os.path.join(output_dir, "faiss_gpu_benchmark.png"))

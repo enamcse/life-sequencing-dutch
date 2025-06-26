@@ -23,15 +23,18 @@ def benchmark_faiss(embeddings, sizes, output_dir):
             continue
 
         emb_subset = embeddings[:n].astype("float32")
-        index = faiss.IndexFlatL2(dim)
 
         start = time.time()
+
+        index = faiss.IndexFlatL2(dim)
+
+        
         index.add(emb_subset)
         end = time.time()
-        build_time = end - start
+        index_time = (end - start) * 1000  # Convert to milliseconds
 
-        print(f"FAISS indexed {n} embeddings in {build_time:.2f} sec")
-        results.append({"embeddings": n, "build_time_sec": build_time})
+        print(f"FAISS indexed {n} embeddings in {index_time:.2f} ms")
+        results.append({"embeddings": n, "index_time_ms": index_time})
 
     # Save CSV
     df = pd.DataFrame(results)
@@ -40,12 +43,12 @@ def benchmark_faiss(embeddings, sizes, output_dir):
 
     # Save Plot
     plt.figure()
-    plt.plot(df["embeddings"], df["build_time_sec"], marker='o', label="FAISS")
+    plt.plot(df["embeddings"], df["index_time_ms"], marker='o', label="FAISS")
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of Embeddings")
-    plt.ylabel("Build Time (seconds)")
-    plt.title("FAISS Build Time vs Number of Embeddings")
+    plt.ylabel("Index Time (ms)")
+    plt.title("FAISS Index Time vs Number of Embeddings")
     plt.grid(True)
     plt.legend()
     plt.savefig(os.path.join(output_dir, "faiss_benchmark.png"))

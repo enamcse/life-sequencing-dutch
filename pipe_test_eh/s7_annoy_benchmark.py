@@ -24,17 +24,19 @@ def benchmark_annoy(embeddings, sizes, output_dir, trees=10):
         if n > total:
             continue
         emb_subset = embeddings[:n]
+
+        start = time.time()
         index = AnnoyIndex(dim, 'angular')
 
         for i, vec in enumerate(emb_subset):
             index.add_item(i, vec.tolist())
 
-        start = time.time()
+        
         index.build(trees)
-        build_time = time.time() - start
+        index_time = (time.time() - start) * 1000  # Convert to milliseconds
 
-        print(f"Built index for {n} embeddings in {build_time:.2f} seconds")
-        results.append({"embeddings": n, "build_time_sec": build_time})
+        print(f"Built index for {n} embeddings in {index_time:.2f} ms")
+        results.append({"embeddings": n, "index_time_ms": index_time})
 
     # Save CSV
     df = pd.DataFrame(results)
@@ -43,12 +45,12 @@ def benchmark_annoy(embeddings, sizes, output_dir, trees=10):
 
     # Save Plot
     plt.figure()
-    plt.plot(df["embeddings"], df["build_time_sec"], marker='o')
+    plt.plot(df["embeddings"], df["index_time_ms"], marker='o')
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Number of Embeddings")
-    plt.ylabel("Annoy Build Time (s)")
-    plt.title("Annoy Build Time vs Number of Embeddings")
+    plt.ylabel("Annoy Index Time (ms)")
+    plt.title("Annoy Index Time vs Number of Embeddings")
     plt.grid(True)
 
     plot_path = os.path.join(output_dir, "annoy_benchmark.png")
