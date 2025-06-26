@@ -116,15 +116,18 @@ def save_embeddings(model, dataloader, output_path):
     ids = []
     with torch.no_grad():
         for batch in dataloader:
-            input_ids = batch['input_ids'].to(model.device)
-            if 'attention_mask' in batch:
-                attention_mask = batch['attention_mask'].to(model.device)
-                outputs = model(input_ids, attention_mask)
-            else:
-                outputs = model(input_ids)
+            # Move all tensor fields to device
+            batch_on_device = {
+                k: v.to(model.device)
+                for k, v in batch.items()
+                if isinstance(v, torch.Tensor)
+            }
 
-            # CLS token embedding
-            emb = outputs.last_hidden_state[:, 0, :]  # (B, H)
+            # Forward pass
+            outputs = model(batch_on_device)
+
+            # Extract CLS token embeddings
+            emb = outputs.last_hidden_state[:, 0, :]
             all_embeddings.append(emb.cpu().numpy())
             ids.extend(batch['sequence_id'].cpu().numpy())
 
