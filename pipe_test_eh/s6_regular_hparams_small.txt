@@ -1,4 +1,4 @@
-epochs: 30
+epochs: 1
 train_split: 0.8
 batch_size: 10
 max_length: 512

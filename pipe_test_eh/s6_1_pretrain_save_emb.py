@@ -117,8 +117,11 @@ def save_embeddings(model, dataloader, output_path):
     with torch.no_grad():
         for batch in dataloader:
             input_ids = batch['input_ids'].to(model.device)
-            attention_mask = batch['attention_mask'].to(model.device)
-            outputs = model(input_ids, attention_mask)
+            if 'attention_mask' in batch:
+                attention_mask = batch['attention_mask'].to(model.device)
+                outputs = model(input_ids, attention_mask)
+            else:
+                outputs = model(input_ids)
 
             # CLS token embedding
             emb = outputs.last_hidden_state[:, 0, :]  # (B, H)

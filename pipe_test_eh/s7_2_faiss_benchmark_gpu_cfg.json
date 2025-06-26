@@ -1,0 +1,4 @@
+{
+  "EMBEDDING_PATH": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step6/embeddings_v0.h5",
+  "OUTPUT_DIR": "/home/ehassan/life-sequencing-dutch/pipe_test_eh/step7/faiss_benchmark_gpu"
+}
