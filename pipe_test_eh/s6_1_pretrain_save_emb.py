@@ -125,9 +125,10 @@ def save_embeddings(model, dataloader, output_path):
 
             # Forward pass
             outputs = model(batch_on_device)
+            logger.info(f"Model output type: {type(outputs)}, len: {len(outputs)}")
 
             # Extract CLS token embeddings
-            emb = outputs.last_hidden_state[:, 0, :]
+            emb = outputs[0][:, 0, :]
             all_embeddings.append(emb.cpu().numpy())
             ids.extend(batch['sequence_id'].cpu().numpy())
 
@@ -188,6 +189,8 @@ def pretrain(cfg, batch_size=None, hparams=None):
     trainer.fit(model, train_dataloader, val_dataloader, ckpt_path=resume_ckpt)
 
     logger.info("Training complete. Now saving person embeddings...")
+    
+
     save_embeddings(model, train_dataloader, output_path=os.path.join(ckpt_dir, embedding_path))
 
 
