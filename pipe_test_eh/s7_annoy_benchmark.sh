@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #SBATCH --job-name=annoy_benchmark
 #SBATCH --ntasks=1
