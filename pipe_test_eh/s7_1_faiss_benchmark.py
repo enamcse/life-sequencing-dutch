@@ -66,8 +66,12 @@ def main(config_path):
 
     emb = load_embeddings(emb_path)
     total = emb.shape[0]
-    sizes = [10, 100, 1000, 10000, min(50000, total), min(100000, total), min(200000, total), total]
-
+    sizes = []
+    val = 10
+    while val <= total:
+        sizes.append(val)
+        val *= 10
+    sizes.append(total)
     benchmark_faiss(emb, sizes, out_dir)
 
 
