@@ -1,0 +1,17 @@
+POS,Interpretation,Original %,Sampled %
+NOUN,Noun,45.77%,47.30%
+VERB,Verb,17.88%,17.90%
+ADJ,Adjective,16.24%,14.90%
+PROPN,Proper Noun,12.32%,11.70%
+ADV,Adverb,6.66%,6.70%
+X,Other (catch-all category),0.50%,0.70%
+INTJ,Interjection,0.18%,0.10%
+PRON,Pronoun,0.17%,0.10%
+ADP,Adposition (Preposition),0.17%,0.60%
+NUM,Numeral,0.06%,0.00%
+AUX,Auxiliary verb (“helping” verb),0.03%,0.00%
+PUNCT,Punctuation,0.01%,0.00%
+SCONJ,Subordinating Conjunction,0.01%,0.00%
+CCONJ,Coordinating Conjunction,0.00%,0.00%
+PART,Particle,0.00%,0.00%
+SYM,Symbol,0.00%,0.00%
