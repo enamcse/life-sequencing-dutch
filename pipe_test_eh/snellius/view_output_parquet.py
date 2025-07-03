@@ -3,7 +3,7 @@ from pathlib import Path
 import json
 
 # Path to your Parquet file
-seq_file = Path("/projects/0/prjs1019/data/fake_embs/feb20_test/feb20/mean.parquet")
+seq_file = Path("/projects/0/prjs1019/data/fake_data_v0/step2/background.parquet")
 
 try:
     df = pd.read_parquet(seq_file)

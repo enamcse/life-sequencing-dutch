@@ -1,0 +1,64 @@
+
+✅ Loaded background.parquet
+Total rows: 20000000
+
+📋 Columns found:
+  - RINPERSOON
+  - year
+  - month
+  - gender
+  - municipality
+
+🔍 Showing up to 3 sample rows:
+
+--- Row 1 ---
+RINPERSOON:
+121141007
+
+year:
+1972
+
+month:
+7
+
+gender:
+2
+
+municipality:
+114
+
+----------------------------------------
+--- Row 2 ---
+RINPERSOON:
+945396148
+
+year:
+1987
+
+month:
+12
+
+gender:
+1
+
+municipality:
+10
+
+----------------------------------------
+--- Row 3 ---
+RINPERSOON:
+697498375
+
+year:
+1955
+
+month:
+11
+
+gender:
+2
+
+municipality:
+385
+
+----------------------------------------
