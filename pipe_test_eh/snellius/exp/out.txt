@@ -1,0 +1,14 @@
+✅ Loading embedding data...
+ - Rows: 10000, Columns: ['rinpersoon_id', 'emb0', 'emb1', 'emb2', 'emb3', 'emb4', 'emb5', 'emb6', 'emb7', 'emb8', 'emb9', 'emb10', 'emb11', 'emb12', 'emb13', 'emb14', 'emb15', 'emb16', 'emb17', 'emb18', 'emb19', 'emb20', 'emb21', 'emb22', 'emb23', 'emb24', 'emb25', 'emb26', 'emb27', 'emb28', 'emb29', 'emb30', 'emb31', 'emb32', 'emb33', 'emb34', 'emb35', 'emb36', 'emb37', 'emb38', 'emb39', 'emb40', 'emb41', 'emb42', 'emb43', 'emb44', 'emb45', 'emb46', 'emb47', 'emb48', 'emb49', 'emb50', 'emb51', 'emb52', 'emb53', 'emb54', 'emb55', 'emb56', 'emb57', 'emb58', 'emb59', 'emb60', 'emb61', 'emb62', 'emb63', 'emb64', 'emb65', 'emb66', 'emb67', 'emb68', 'emb69', 'emb70', 'emb71', 'emb72', 'emb73', 'emb74', 'emb75', 'emb76', 'emb77', 'emb78', 'emb79', 'emb80', 'emb81', 'emb82', 'emb83', 'emb84', 'emb85', 'emb86', 'emb87', 'emb88', 'emb89', 'emb90', 'emb91', 'emb92', 'emb93', 'emb94', 'emb95', 'emb96', 'emb97', 'emb98', 'emb99', 'emb100', 'emb101', 'emb102', 'emb103', 'emb104', 'emb105', 'emb106', 'emb107', 'emb108', 'emb109', 'emb110', 'emb111', 'emb112', 'emb113', 'emb114', 'emb115', 'emb116', 'emb117', 'emb118', 'emb119', 'emb120', 'emb121', 'emb122', 'emb123', 'emb124', 'emb125', 'emb126', 'emb127', 'emb128', 'emb129', 'emb130', 'emb131', 'emb132', 'emb133', 'emb134', 'emb135', 'emb136', 'emb137', 'emb138', 'emb139', 'emb140', 'emb141', 'emb142', 'emb143', 'emb144', 'emb145', 'emb146', 'emb147', 'emb148', 'emb149', 'emb150', 'emb151', 'emb152', 'emb153', 'emb154', 'emb155', 'emb156', 'emb157', 'emb158', 'emb159']
+✅ Loading background data...
+ - Rows: 20000000, Columns: ['RINPERSOON', 'year', 'month', 'gender', 'municipality']
+✅ Joining on rinpersoon_id...
+ - Joined rows: 10000
+   rinpersoon_id      emb0      emb1  ...  month  gender  municipality
+0       88508332 -0.000598  0.001362  ...     10       1           473
+1      161620834 -0.005621 -0.000539  ...      6       2           146
+2      279536795 -0.003027 -0.002857  ...      8       1           406
+3      100223249  0.000030  0.001737  ...      9       1           219
+4      537570002 -0.002880 -0.002632  ...     12       1           441
+
+[5 rows x 165 columns]

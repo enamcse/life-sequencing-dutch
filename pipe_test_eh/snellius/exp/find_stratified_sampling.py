@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
+import random
 
 # ----------------------------
 # 1. Data loading
@@ -85,6 +86,7 @@ def sample_evenly_from_cones(df, assignments, num_samples):
     unique_cones = df["cone"].unique()
     num_cones = len(unique_cones)
     print(f"✅ Total cones: {num_cones}")
+    print(df["cone"].value_counts())
 
     samples_per_cone = max(1, num_samples // num_cones)
     sampled_rows = []
@@ -131,7 +133,10 @@ def main():
     dim = 160
     num_cones = 100
     sample_size = 1000
+    strategy = "density_weighted_strategy" 
     variable_to_compare = "gender"  # Or "year", "month", "municipality"
+    random.seed(42)
+    np.random.seed(42)
 
     # -------- Load & join --------
     df = load_data(embedding_file, background_file)
@@ -142,7 +147,7 @@ def main():
     embeddings = df[emb_cols].to_numpy()
 
     # -------- Generate cone centers --------
-    cone_centers = generate_sphere(num_cones, dim, strategy="uniform")
+    cone_centers = generate_sphere(num_cones, dim, strategy)
     print(f"✅ Generated {num_cones} cone centers in {dim}D space")
 
     # -------- Assign cones --------
