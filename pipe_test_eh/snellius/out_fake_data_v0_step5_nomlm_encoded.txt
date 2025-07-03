@@ -1,0 +1,33 @@
+🔍 Inspecting HDF5 file: /projects/0/prjs1019/data/fake_data_v0/step5/encoding=nomlm/encoded.h5
+
+📁 Available Datasets:
+
+- input_ids: shape = (4441429, 4, 512), dtype = int64
+- original_sequence: shape = (4441429, 512), dtype = int64
+- padding_mask: shape = (4441429, 512), dtype = int64
+- sequence_id: shape = (4441429,), dtype = int64
+
+🔍 Sample values from each dataset (first 1–2 entries):
+
+▶️ input_ids:
+[[[  1 551   5 ...   0   0   0]
+  [  0   0   0 ...   0   0   0]
+  [  0   0   0 ...   0   0   0]
+  [  0   0   0 ...   0   0   0]]
+
+ [[  1 587   6 ...   0   0   0]
+  [  0   0   0 ...   0   0   0]
+  [  0   0   0 ...   0   0   0]
+  [  0   0   0 ...   0   0   0]]]
+
+▶️ original_sequence:
+[[  1 551   5 ...   0   0   0]
+ [  1 587   6 ...   0   0   0]]
+
+▶️ padding_mask:
+[[1 1 1 ... 0 0 0]
+ [1 1 1 ... 0 0 0]]
+
+▶️ sequence_id:
+[ 88508332 161620834]
+
