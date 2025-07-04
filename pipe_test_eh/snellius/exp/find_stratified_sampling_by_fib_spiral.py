@@ -8,6 +8,8 @@ from math import cos, gamma, pi, sin, sqrt
 from typing import Callable, Iterator, List, Tuple
 from sklearn.neighbors import kneighbors_graph
 import matplotlib.pyplot as plt
+from collections import Counter
+from itertools import count
 
 # ----------------------------
 # 1. Data loading
