@@ -282,21 +282,18 @@ def assign_buckets(embeddings: np.ndarray,
     return bucket_ids.tolist()
 
 def bucket_sampling(words: List[str],
-                    pos_tags: List[str],
-                    bucket_ids,
+                    bucket_ids: List[int],
                     k: int = 100) -> Tuple[List[str], List[str]]:
     """Sample k words proportionally from each bucket, handling rounding.
     
     Args:
       words: Original words in order.
-      pos_tags: POS tags aligned with words.
       bucket_ids: Each word's assigned bucket ID.
       k: Desired sample size.
     Returns:
       (sampled_words, sampled_pos).
     """
     n = len(words)
-    print(f"Total words: {n}, Buckets: {bucket_ids}, Desired sample size: {k}")
     bucket_count = Counter(bucket_ids)
     b = len(set(bucket_ids))
     samples_per_bucket = {}
@@ -322,16 +319,12 @@ def bucket_sampling(words: List[str],
             idx = (idx + 1) % b
 
     bucketed_words = {}
-    bucketed_pos = {}
     for i, bid in enumerate(bucket_ids):
         if bid not in bucketed_words:
             bucketed_words[bid] = []
-            bucketed_pos[bid] = []
         bucketed_words[bid].append(words[i])
-        bucketed_pos[bid].append(pos_tags[i])
 
     sampled_words = []
-    sampled_pos = []
     for bid in bucketed_words:
         cnt = samples_per_bucket[bid]
         if cnt > 0:
@@ -340,9 +333,8 @@ def bucket_sampling(words: List[str],
             chosen = indices[:cnt]
             for idx in chosen:
                 sampled_words.append(bucketed_words[bid][idx])
-                sampled_pos.append(bucketed_pos[bid][idx])
 
-    return sampled_words, sampled_pos
+    return sampled_words
 
 def sample_proportionally_from_buckets(df, bucket_col, sample_size):
     """
@@ -463,7 +455,7 @@ def main():
     embedding_file = "/projects/0/prjs1019/data/fake_embs/feb20_test/feb20/mean.parquet"
     background_file = "/projects/0/prjs1019/data/fake_data_v0/step2/background.parquet"
 
-    output_dir = "~/pipe_test_eh/snellius/exp/find_stratified_sampling_by_fib_spiral_output"
+    output_dir = "~/life-sequencing-dutch/pipe_test_eh/snellius/exp/find_stratified_sampling_by_fib_spiral_output"
     output_dir = os.path.expanduser(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -493,9 +485,9 @@ def main():
     bucket_ids = assign_buckets(embeddings, sphere_pts)
     df["bucket"] = bucket_ids
     print("✅ Buckets assigned")
-    print(f" -  Buckets: {bucket_ids}")
+
     # -------- Sample k=1000 people proportionally from buckets --------
-    sampled_ids = bucket_sampling(person_ids, df[variables_to_compare], bucket_ids, k)
+    sampled_ids = bucket_sampling(person_ids, bucket_ids, k)
     sampled_df = df[df["rinpersoon_id"].isin(sampled_ids)]
     print("✅ People sampled")
 
