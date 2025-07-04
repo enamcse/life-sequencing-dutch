@@ -381,7 +381,7 @@ def main():
     # -------- File paths --------
     embedding_file = "/projects/0/prjs1019/data/fake_embs/feb20_test/feb20/mean.parquet"
     background_file = "/projects/0/prjs1019/data/fake_data_v0/step2/background.parquet"
-    output_dir = "~/life-sequencing-dutch/pipe_test_eh/snellius/exp/find_stratified_sampling_output"
+    output_dir = "~/life-sequencing-dutch/pipe_test_eh/snellius/exp/find_stratified_sampling_by_knn_output"
     output_dir = os.path.expanduser(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
