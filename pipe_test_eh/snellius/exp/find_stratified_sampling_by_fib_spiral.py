@@ -113,159 +113,8 @@ def uniform_sphere(d: int, n: int) -> List[List[float]]:
             points[i][dim] *= cos(deg)
     return points
 
-# deprecated
-def generate_uniform_sphere(samples, dim):
-    """
-    Default strategy: uniformly sample unit vectors on hypersphere.
-    """
-    vecs = np.random.randn(samples, dim)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    return vecs
-
-# deprecated
-def generate_sphere(samples, dim, strategy="uniform", **kwargs):
-    """
-    Generalized cone center generator.
-    
-    Args:
-        samples (int): Number of cone centers to generate.
-        dim (int): Embedding dimension.
-        strategy (str or callable): How to place centers.
-            - "uniform": random directions on sphere.
-            - callable: user-defined function.
-        **kwargs: Extra arguments for custom strategy.
-    
-    Returns:
-        ndarray of shape (samples, dim): Cone centers.
-    """
-    if strategy == "uniform":
-        return generate_uniform_sphere(samples, dim)
-    
-    elif callable(strategy):
-        return strategy(samples, dim, **kwargs)
-    
-    else:
-        raise ValueError(f"Unknown strategy: {strategy}")
-    
-# deprecated
-def density_weighted_strategy(samples, dim, data):
-    """
-    Example placeholder: cluster data, return cluster centers.
-    """
-    kmeans = KMeans(n_clusters=samples)
-    kmeans.fit(data)
-    centers = kmeans.cluster_centers_
-    centers /= np.linalg.norm(centers, axis=1, keepdims=True)
-    return centers
-
 # ----------------------------
 # 3. Cone assignment
-# ----------------------------
-def mydist(x, y, **kwargs):
-    f = kwargs["f"]
-    return np.sum(np.abs(x - y) ** f) ** (1. / f)
-
-
-def nearest_nei_dist_mean(X, k, distance='cosine', f=None):
-    if distance == 'cosine':
-        A = kneighbors_graph(X=X, n_neighbors=k, metric='cosine', include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    y = np.asarray(X[j])
-                    dist = 1. - np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
-                    aver_dist.append(dist)
-            aver_dist_list.append(np.mean(aver_dist))
-        return aver_dist_list
-    elif distance == 'l2_distance':
-        A = kneighbors_graph(X=X, n_neighbors=k, metric='minkowski', p=2, include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    aver_dist.append(np.linalg.norm(x - np.asarray(X[j])))
-            aver_dist_list.append(np.mean(aver_dist))
-        return aver_dist_list
-    elif distance == 'l1_distance':
-        A = kneighbors_graph(X=X, n_neighbors=k, metric='minkowski', p=1, include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    aver_dist.append(np.sum(np.abs(x - np.asarray(X[j]))))
-            aver_dist_list.append(np.mean(aver_dist))
-        return aver_dist_list
-    elif distance == 'frac_distance':
-        p = len(X[0])
-        if f is None:
-            f = 1. / p
-        A = kneighbors_graph(X=X, n_neighbors=k, metric=mydist, metric_params={"f": f}, include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    aver_dist.append(np.sum(np.abs(x - np.asarray(X[j])) ** f) ** (1. / f))
-            aver_dist_list.append(np.mean(aver_dist))
-        return aver_dist_list
-
-
-def nearest_nei_dist_std(X, k, distance='cosine'):
-    if distance == 'cosine':
-        A = kneighbors_graph(X=X, n_neighbors=k, metric='cosine', include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    y = np.asarray(X[j])
-                    dist = 1. - np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
-                    aver_dist.append(dist)
-            aver_dist_list.append(np.std(aver_dist))
-        return aver_dist_list
-    elif distance == 'l2_distance':
-        A = kneighbors_graph(X=X, n_neighbors=k, metric='minkowski', p=2, include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    y = np.asarray(X[j])
-                    dist = np.linalg.norm(x - y)
-                    aver_dist.append(dist)
-            aver_dist_list.append(np.std(aver_dist))
-        return aver_dist_list
-    elif distance == 'l1_distance':
-        A = kneighbors_graph(X=X, n_neighbors=k, metric='minkowski', p=1, include_self=False)
-        aver_dist_list = []
-        for i in range(len(X)):
-            x = np.asarray(X[i])
-            aver_dist = []
-            for j in A[i].indices:
-                if i != j:
-                    aver_dist.append(np.sum(np.abs(x - np.asarray(X[j]))))
-            aver_dist_list.append(np.std(aver_dist))
-        return aver_dist_list
-    
-# deprecated
-def assign_points_to_cones(embeddings, cone_centers):
-    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-    cone_centers = cone_centers / np.linalg.norm(cone_centers, axis=1, keepdims=True)
-    similarities = embeddings @ cone_centers.T
-    return np.argmax(similarities, axis=1)
-
-# ----------------------------
-# 4. Sampling evenly from cones
 # ----------------------------
 def assign_buckets(embeddings: np.ndarray,
                    sphere_points: np.ndarray) -> List[int]:
@@ -280,6 +129,12 @@ def assign_buckets(embeddings: np.ndarray,
     dot_prods = np.dot(embeddings, sphere_points.T)
     bucket_ids = np.argmax(dot_prods, axis=1)
     return bucket_ids.tolist()
+    
+
+# ----------------------------
+# 4. Sampling evenly from cones
+# ----------------------------
+
 
 def bucket_sampling(words: List[str],
                     bucket_ids: List[int],
@@ -336,74 +191,6 @@ def bucket_sampling(words: List[str],
 
     return sampled_words
 
-def sample_proportionally_from_buckets(df, bucket_col, sample_size):
-    """
-    Sample proportionally from each bucket to match the overall density distribution.
-    """
-    total = len(df)
-    bucket_counts = df[bucket_col].value_counts().sort_index()
-    buckets = bucket_counts.index
-
-    # Determine how many samples per bucket (proportional to size)
-    samples_per_bucket = {}
-    for b in buckets:
-        fraction = bucket_counts[b] / total
-        samples_per_bucket[b] = max(1, round(sample_size * fraction))
-
-    # Adjust rounding error
-    diff = sample_size - sum(samples_per_bucket.values())
-    if diff != 0:
-        sorted_buckets = sorted(buckets, key=lambda x: bucket_counts[x], reverse=True)
-        idx = 0
-        while diff != 0 and idx < len(sorted_buckets):
-            b = sorted_buckets[idx]
-            if diff > 0:
-                samples_per_bucket[b] += 1
-                diff -= 1
-            else:
-                if samples_per_bucket[b] > 1:
-                    samples_per_bucket[b] -= 1
-                    diff += 1
-            idx = (idx + 1) % len(sorted_buckets)
-
-    # Actually sample
-    sampled_rows = []
-    for b in buckets:
-        subset = df[df[bucket_col] == b]
-        n_to_sample = samples_per_bucket[b]
-        if len(subset) <= n_to_sample:
-            sampled = subset
-        else:
-            sampled = subset.sample(n=n_to_sample, random_state=42)
-        sampled_rows.append(sampled)
-
-    final_sample = pd.concat(sampled_rows)
-    print(f"✅ Sampled {len(final_sample)} rows total")
-    return final_sample
-
-# deprecated
-def sample_evenly_from_cones(df, assignments, num_samples):
-    df = df.copy()
-    df["cone"] = assignments
-    unique_cones = df["cone"].unique()
-    num_cones = len(unique_cones)
-    print(f"✅ Total cones: {num_cones}")
-    print(df["cone"].value_counts())
-
-    samples_per_cone = max(1, num_samples // num_cones)
-    sampled_rows = []
-
-    for cone in unique_cones:
-        subset = df[df["cone"] == cone]
-        if len(subset) <= samples_per_cone:
-            sampled = subset
-        else:
-            sampled = subset.sample(samples_per_cone, random_state=42)
-        sampled_rows.append(sampled)
-
-    final_sample = pd.concat(sampled_rows)
-    print(f"✅ Sampled {len(final_sample)} rows total")
-    return final_sample
 
 # ----------------------------
 # 5. Compare metadata distribution
@@ -503,7 +290,6 @@ def main():
         # Save Plot
         plot_file = os.path.join(output_dir, f"comparison_{variable}.png")
         plot_comparison_distribution(comparison_df, variable, plot_file)
-
 
 
 # ----------------------------
