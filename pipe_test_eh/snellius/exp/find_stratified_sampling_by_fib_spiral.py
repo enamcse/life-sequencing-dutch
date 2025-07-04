@@ -5,7 +5,7 @@ from sklearn.cluster import KMeans
 import random
 from itertools import count
 from math import cos, gamma, pi, sin, sqrt
-from typing import Callable, Iterator, List
+from typing import Callable, Iterator, List, Tuple
 from sklearn.neighbors import kneighbors_graph
 import matplotlib.pyplot as plt
 
