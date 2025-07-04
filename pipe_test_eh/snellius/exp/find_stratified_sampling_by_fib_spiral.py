@@ -283,7 +283,7 @@ def assign_buckets(embeddings: np.ndarray,
 
 def bucket_sampling(words: List[str],
                     pos_tags: List[str],
-                    bucket_ids: List[int],
+                    bucket_ids,
                     k: int = 100) -> Tuple[List[str], List[str]]:
     """Sample k words proportionally from each bucket, handling rounding.
     
@@ -296,6 +296,7 @@ def bucket_sampling(words: List[str],
       (sampled_words, sampled_pos).
     """
     n = len(words)
+    print(f"Total words: {n}, Buckets: {bucket_ids}, Desired sample size: {k}")
     bucket_count = Counter(bucket_ids)
     b = len(set(bucket_ids))
     samples_per_bucket = {}
@@ -492,9 +493,9 @@ def main():
     bucket_ids = assign_buckets(embeddings, sphere_pts)
     df["bucket"] = bucket_ids
     print("✅ Buckets assigned")
-
+    print(f" -  Buckets: {bucket_ids}")
     # -------- Sample k=1000 people proportionally from buckets --------
-    sampled_ids = bucket_sampling(person_ids, bucket_ids, k)
+    sampled_ids = bucket_sampling(person_ids, df[variables_to_compare], bucket_ids, k)
     sampled_df = df[df["rinpersoon_id"].isin(sampled_ids)]
     print("✅ People sampled")
 
