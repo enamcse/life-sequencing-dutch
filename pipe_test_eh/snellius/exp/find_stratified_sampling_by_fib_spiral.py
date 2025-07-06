@@ -236,8 +236,6 @@ def plot_comparison_distribution(comparison_df, variable, output_file):
 # 6. MAIN
 # ----------------------------
 def main():
-    import os
-
     # -------- File paths --------
     embedding_file = "/projects/0/prjs1019/data/fake_embs/feb20_test/feb20/mean.parquet"
     background_file = "/projects/0/prjs1019/data/fake_data_v0/step2/background.parquet"
@@ -271,6 +269,10 @@ def main():
     # -------- Assign people to buckets via cosine sim --------
     bucket_ids = assign_buckets(embeddings, sphere_pts)
     df["bucket"] = bucket_ids
+    # Bucket count
+    bucket_count = Counter(bucket_ids)
+    print(f"✅ Buckets assigned: {len(bucket_count)} unique buckets")
+    print(f"Bucket distribution: {bucket_count}")
     print("✅ Buckets assigned")
 
     # -------- Sample k=1000 people proportionally from buckets --------
