@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from collections import Counter
 from itertools import count
 import itertools
+from scipy.stats import pearsonr, ks_2samp
+from scipy.spatial.distance import jensenshannon
 
 # ----------------------------
 # 1. Data loading
@@ -18,6 +20,8 @@ import itertools
 def load_data(embedding_file, background_file):
     print("✅ Loading embedding data...")
     df_emb = pd.read_parquet(embedding_file)
+    dim = len(df_emb.columns) - 1  # Exclude rinpersoon_id
+    print(f" - Dimension: {dim}")
     print(f" - Rows: {len(df_emb)}, Columns: {list(df_emb.columns)}")
 
     print("✅ Loading background data...")
@@ -30,7 +34,7 @@ def load_data(embedding_file, background_file):
     print("✅ Joining on rinpersoon_id...")
     df_merged = df_emb.merge(df_bg, on="rinpersoon_id", how="inner")
     print(f" - Joined rows: {len(df_merged)}")
-    return df_merged
+    return dim, df_merged
 
 # ----------------------------
 # 2. Sphere generation
@@ -196,6 +200,21 @@ def bucket_sampling(words: List[str],
 # ----------------------------
 # 5. Compare metadata distribution
 # ----------------------------
+def compute_bucket_percentages(buckets_df):
+    """Compute the percentage of each bucket in the DataFrame."""
+    bucket_counts = buckets_df.value_counts(normalize=True).sort_index()
+    return bucket_counts.tolist()
+
+def compute_pearson(p, q):
+    return pearsonr(p, q)[0]
+
+def compute_ks(p, q):
+    return ks_2samp(p, q).statistic
+
+def compute_js(p, q):
+    return jensenshannon(p, q)
+
+
 def compare_metadata_distribution(full_df, sample_df, variable):
     print(f"\n📊 Comparing distribution for: {variable}")
 
@@ -276,7 +295,7 @@ def main():
         print(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
 
         # Load embeddings and background data for whole population
-        pop_embeddings = load_data(file_path, background_file)
+        dim, pop_embeddings = load_data(file_path, background_file)
         print(df.head())
 
         df_liss = pd.read_parquet(liss_file)
@@ -284,9 +303,14 @@ def main():
         liss_ids = df_liss['RINPERSOON'].unique()
         liss_embeddings = df_liss[emb_cols].to_numpy()
 
-        # Your existing stratification and bucketing logic
-        pop_buckets = stratify_into_buckets(pop_embeddings, num_buckets)
-        liss_buckets = stratify_into_buckets(liss_embeddings, num_buckets)
+        # -------- Generate b=100 points on the d-dim sphere --------
+        sphere_pts = uniform_sphere(dim, b)
+        sphere_pts = np.array(sphere_pts)
+        print(f"✅ Sphere points generated: {sphere_pts.shape}")
+
+        # Existing stratification and bucketing logic
+        pop_buckets = assign_buckets(pop_embeddings, sphere_pts)  # stratify_into_buckets(pop_embeddings, num_buckets)
+        liss_buckets = assign_buckets(liss_embeddings, sphere_pts) # stratify_into_buckets(liss_embeddings, num_buckets)
 
         pop_bucket_pct = compute_bucket_percentages(pop_buckets)
         liss_bucket_pct = compute_bucket_percentages(liss_buckets)
@@ -320,10 +344,8 @@ def main():
     df = pd.DataFrame(results)
     df.to_csv('sampling_metrics_summary.csv', index=False)
 
-
+'''
     # -------- Load & join --------
-    
-    
 
     df = load_data(embedding_file, background_file)
     
@@ -364,18 +386,10 @@ def main():
         # Save Plot
         plot_file = os.path.join(output_dir, f"comparison_{variable}.png")
         plot_comparison_distribution(comparison_df, variable, plot_file)
-
+'''
 
 # ----------------------------
 # Entry point
 # ----------------------------
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
