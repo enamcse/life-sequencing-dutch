@@ -80,22 +80,23 @@ def get_dataloaders(mlm_path, num_val_items, batch_size):
         validation=False,
         num_val_items=num_val_items
     )
-    num_workers = len(os.sched_getaffinity(0)) - 3
-    logging.info(f"num of workers for train dataloader = {num_workers}")
+    num_train_workers = max(len(os.sched_getaffinity(0)) - 3, 1)
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=batch_size,
-        num_workers=2,
-        prefetch_factor=2,
-        persistent_workers=True
+        num_workers=min(num_train_workers, 2),
+        prefetch_factor=2, 
+        persistent_workers=True,  # keeps the worker processes + HDF5 handles alive
+        pin_memory=True       
     )
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        num_workers=num_workers,
-        prefetch_factor=2,
-        persistent_workers=True,
-        shuffle=True
+        num_workers=num_train_workers,
+        shuffle=True,
+        prefetch_factor=2, 
+        persistent_workers=True,  # keeps the worker processes + HDF5 handles alive
+        pin_memory=True       
     )
     return train_dataloader, val_dataloader
 
@@ -125,9 +126,7 @@ def pretrain(cfg, batch_size=None, hparams=None):
     # Determine batch size and validation interval.
     num_val_items = cfg.get("NUM_VAL_ITEMS", 100000)
     batch_size = hparams['batch_size'] if batch_size is None else batch_size
-    val_check_interval = cfg.get('VAL_CHECK_INTERVAL', 0.5)
-    hparams['VAL_CHECK_INTERVAL'] = val_check_interval
-
+    
     # Create dataloaders.
     logger.info("loading dataloaders")
     train_dataloader, val_dataloader = get_dataloaders(mlm_path, num_val_items, batch_size)
@@ -156,7 +155,7 @@ def pretrain(cfg, batch_size=None, hparams=None):
         default_root_dir=ckpt_dir,
         callbacks=callbacks,
         max_epochs=hparams['epochs'],
-        val_check_interval=val_check_interval,
+        val_check_interval=hparams.get('val_check_interval', 0.5),
         accelerator=ACCELERATOR,
         devices=N_DEVICES,
         logger=csv_logger,
