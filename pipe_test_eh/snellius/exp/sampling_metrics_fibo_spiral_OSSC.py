@@ -282,7 +282,7 @@ def main():
 
     # -------- Config --------
     dim = 280 # embedding dimension default
-    b = 100   # number of sphere directions / buckets default
+    b = 100   # number of sphere directions / buckets default - using a list of num_buckets
     k = 1000  # sample size default - not in use now
     variables_to_compare = ["gender", "year", "month", "municipality"]
     random.seed(42)
@@ -324,7 +324,7 @@ def main():
         liss_embeddings = pop_embeddings[pop_embeddings['RINPERSOON'].isin(liss_ids_set)]
 
         # -------- Generate b=100 points on the d-dim sphere --------
-        sphere_pts = uniform_sphere(dim, b)
+        sphere_pts = uniform_sphere(dim, num_buckets)
         sphere_pts = np.array(sphere_pts)
         print(f"✅ Sphere points generated: {sphere_pts.shape}")
 
