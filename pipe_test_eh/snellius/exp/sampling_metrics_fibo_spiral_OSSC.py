@@ -427,7 +427,7 @@ def main():
         liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
 
         # ---------- SAVE BUCKET IF NEEDED --------------
-        embedding_file_base = os.path.splitext(os.path.basename(file_path))[0]
+        embedding_file_base = emb_type # os.path.splitext(os.path.basename(file_path))[0]
 
         if cfg.get("OUTPUT_POP_BUCKET_ID", 0):
             pd.DataFrame({

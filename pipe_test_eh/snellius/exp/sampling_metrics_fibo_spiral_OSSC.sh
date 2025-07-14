@@ -6,8 +6,8 @@
 #SBATCH --time=02:30:00
 #SBATCH --mem=300G
 # #SBATCH -p rome 
-#SBATCH -e /gpfs/ostor/ossc9424/data/eh/logs/%x.%j.err
-#SBATCH -o /gpfs/ostor/ossc9424/data/eh/logs/%x.%j.out
+#SBATCH -e /gpfs/ostor/ossc9424/data/eh/logs/%j.%x.err
+#SBATCH -o /gpfs/ostor/ossc9424/data/eh/logs/%j.%x.out
 
 echo "job started"
 
