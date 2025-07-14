@@ -15,13 +15,15 @@ from collections import Counter
 from itertools import count
 import itertools
 import json
-from scipy.stats import pearsonr, ks_2samp
-from scipy.spatial.distance import jensenshannon
+from scipy.stats import pearsonr, ks_2samp, chisquare, wasserstein_distance, entropy
+from scipy.spatial.distance import jensenshannon, cosine
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
 LISS_FILE = 'LISS_FILE'
 OUTPUT_DIR = 'OUTPUT_DIR'
+OUTPUT_POP_BUCKET_ID = 'OUTPUT_POP_BUCKET_ID'
+OUTPUT_LISS_BUCKET_ID = 'OUTPUT_LISS_BUCKET_ID'
 
 logging.basicConfig(
     level=logging.INFO,
@@ -226,6 +228,12 @@ def bucket_sampling(words: List[str],
 # ----------------------------
 # 5. Helper functions for metrics
 # ----------------------------
+def expand_counts_to_samples(counts):
+    samples = []
+    for idx, count in enumerate(counts):
+        samples.extend([idx] * int(count))
+    return np.array(samples)
+
 def compute_bucket_percentages(buckets_df, num_buckets=100):
     """Compute the percentage of each bucket in the DataFrame."""
     # bucket_counts = buckets_df.value_counts(normalize=True).sort_index()
@@ -238,11 +246,69 @@ def compute_bucket_percentages(buckets_df, num_buckets=100):
 def compute_pearson(p, q):
     return pearsonr(p, q)[0]
 
-def compute_ks(p, q):
-    return ks_2samp(p, q).statistic
-
 def compute_js(p, q):
+    p = np.array(p, dtype=float)
+    q = np.array(q, dtype=float)
+    p /= p.sum()
+    q /= q.sum()
     return jensenshannon(p, q)
+
+def compute_ks_from_samples(p_samples, q_samples):
+    return ks_2samp(p_samples, q_samples).statistic
+
+def compute_kl(p, q, epsilon=1e-10):
+    p = np.array(p, dtype=float) + epsilon
+    q = np.array(q, dtype=float) + epsilon
+    p /= p.sum()
+    q /= q.sum()
+    return np.sum(p * np.log(p / q))
+
+def compute_chi_square(pop_counts, liss_counts):
+    pop_counts = np.array(pop_counts, dtype=float)
+    liss_counts = np.array(liss_counts, dtype=float)
+    expected = pop_counts / pop_counts.sum() * liss_counts.sum()
+    expected += 1e-10
+    liss_counts += 1e-10
+    stat, _ = chisquare(f_obs=liss_counts, f_exp=expected)
+    return stat
+
+def compute_wasserstein(p_samples, q_samples):
+    return wasserstein_distance(p_samples, q_samples)
+
+def compute_hellinger(p, q):
+    p = np.array(p, dtype=float)
+    q = np.array(q, dtype=float)
+    p /= p.sum()
+    q /= q.sum()
+    return np.sqrt(0.5 * np.sum((np.sqrt(p) - np.sqrt(q))**2))
+
+def compute_entropy(probs):
+    probs = np.array(probs, dtype=float) + 1e-10
+    probs /= probs.sum()
+    return entropy(probs)
+
+def compute_gini(counts):
+    counts = np.sort(np.array(counts, dtype=float))
+    n = len(counts)
+    index = np.arange(1, n + 1)
+    return (2 * np.sum(index * counts) / np.sum(counts) - (n + 1)) / n
+
+def compute_cosine_similarity(p, q):
+    return 1 - cosine(p, q)
+
+def compute_coverage(probs, threshold=1e-6):
+    return sum(p > threshold for p in probs)
+
+def buckets_to_cover_fraction(probs, target=0.9):
+    sorted_probs = sorted(probs, reverse=True)
+    cumulative = 0.0
+    count = 0
+    for p in sorted_probs:
+        cumulative += p
+        count += 1
+        if cumulative >= target:
+            return count
+    return len(probs)
 
 
 
@@ -356,25 +422,75 @@ def main():
         sphere_pts = np.array(sphere_pts)
         logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
 
-        # Existing stratification and bucketing logic
-        pop_buckets = assign_buckets(pop_embeddings[emb_cols], sphere_pts)  # stratify_into_buckets(pop_embeddings, num_buckets)
-        liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts) # stratify_into_buckets(liss_embeddings, num_buckets)
+        # --------------- STRATIFICATION -----------------
+        pop_buckets = assign_buckets(pop_embeddings[emb_cols], sphere_pts)
+        liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
 
-        pop_bucket_pct = compute_bucket_percentages(pop_buckets, num_buckets)
-        liss_bucket_pct = compute_bucket_percentages(liss_buckets, num_buckets)
+        # ---------- SAVE BUCKET IF NEEDED --------------
+        embedding_file_base = os.path.splitext(os.path.basename(file_path))[0]
 
-        # Compute metrics
-        pearson_corr = compute_pearson(pop_bucket_pct, liss_bucket_pct)
-        ks_div = compute_ks(pop_bucket_pct, liss_bucket_pct)
-        js_div = compute_js(pop_bucket_pct, liss_bucket_pct)
+        if cfg.get("OUTPUT_POP_BUCKET_ID", 0):
+            pd.DataFrame({
+                'RINPERSOON': pop_embeddings['RINPERSOON'],
+                'BucketID': pop_buckets
+            }).to_csv(os.path.join(output_dir, f"pop_bucket_ids_{embedding_file_base}_buckets{num_buckets}.csv"), index=False)
 
-        max_pct_pop = max(pop_bucket_pct)
-        max_pct_liss = max(liss_bucket_pct)
+        if cfg.get("OUTPUT_LISS_BUCKET_ID", 0):
+            pd.DataFrame({
+                'RINPERSOON': liss_embeddings['RINPERSOON'],
+                'BucketID': liss_buckets
+            }).to_csv(os.path.join(output_dir, f"liss_bucket_ids_{embedding_file_base}_buckets{num_buckets}.csv"), index=False)
 
-        buckets_covered_pop = sum(p > 0 for p in pop_bucket_pct)
-        buckets_covered_liss = sum(p > 0 for p in liss_bucket_pct)
+        # --------------- COUNTS & PROBABILITIES -----------------
+        pop_counts = [0] * num_buckets
+        for bid in pop_buckets:
+            pop_counts[bid] += 1
+        liss_counts = [0] * num_buckets
+        for bid in liss_buckets:
+            liss_counts[bid] += 1
 
-        # Save to results
+        pop_total = sum(pop_counts)
+        liss_total = sum(liss_counts)
+
+        pop_probs = [c / pop_total for c in pop_counts]
+        liss_probs = [c / liss_total for c in liss_counts]
+
+
+        # --------------- SAMPLES FOR KS/WASSERSTEIN -----------------
+        pop_samples = expand_counts_to_samples(pop_counts)
+        liss_samples = expand_counts_to_samples(liss_counts)
+
+
+        # --------------- METRIC COMPUTATION -----------------
+
+        pearson_corr = compute_pearson(pop_probs, liss_probs)
+        ks_div = compute_ks_from_samples(pop_samples, liss_samples)
+        js_div = compute_js(pop_probs, liss_probs)
+        kl_div = compute_kl(pop_probs, liss_probs)
+        chi_square_stat = compute_chi_square(pop_counts, liss_counts)
+        wasserstein_dist = compute_wasserstein(pop_samples, liss_samples)
+        hellinger_dist = compute_hellinger(pop_probs, liss_probs)
+        cosine_sim = compute_cosine_similarity(pop_probs, liss_probs)
+
+        pop_entropy = compute_entropy(pop_probs)
+        liss_entropy = compute_entropy(liss_probs)
+        pop_gini = compute_gini(pop_counts)
+        liss_gini = compute_gini(liss_counts)
+
+        # --------------- COVERAGE -----------------
+        coverage_threshold = 1e-6
+        buckets_covered_pop = compute_coverage(pop_probs, threshold=coverage_threshold)
+        buckets_covered_liss = compute_coverage(liss_probs, threshold=coverage_threshold)
+
+        max_pct_pop = max(pop_probs)
+        max_pct_liss = max(liss_probs)
+
+        # --------------- FRACTIONAL COVERAGE -----------------
+        buckets_to_cover_90_pop = buckets_to_cover_fraction(pop_probs, 0.90)
+        buckets_to_cover_90_liss = buckets_to_cover_fraction(liss_probs, 0.90)
+
+
+        # --------------- SAVE RESULTS -----------------
         results.append({
             'embedding_type': emb_type,
             'year': year,
@@ -383,10 +499,21 @@ def main():
             'pearson_corr': pearson_corr,
             'ks_div': ks_div,
             'js_div': js_div,
+            'kl_div': kl_div,
+            'chi_square': chi_square_stat,
+            'wasserstein': wasserstein_dist,
+            'hellinger': hellinger_dist,
+            'cosine_sim': cosine_sim,
+            'pop_entropy': pop_entropy,
+            'liss_entropy': liss_entropy,
+            'pop_gini': pop_gini,
+            'liss_gini': liss_gini,
             'max_pct_pop': max_pct_pop,
             'max_pct_liss': max_pct_liss,
             'buckets_covered_pop': buckets_covered_pop,
-            'buckets_covered_liss': buckets_covered_liss
+            'buckets_covered_liss': buckets_covered_liss,
+            'buckets_to_cover_90_pop': buckets_to_cover_90_pop,
+            'buckets_to_cover_90_liss': buckets_to_cover_90_liss
         })
 
     df = pd.DataFrame(results)
