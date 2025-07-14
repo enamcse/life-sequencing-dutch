@@ -1,0 +1,6 @@
+{
+  "EMBEDDING_FILE": "/gpfs/ostor/ossc9424/data/eh/embedding_config_ossc.csv",
+  "BACKGROUND_FILE": "/gpfs/ostor/ossc9424/data/llm/background_files/background.csv",
+  "LISS_FILE": "/gpfs/ostor/ossc9424/data/LISS/raw/liss_dataset.parquet",
+  "OUTPUT_DIR": "fib_spiral_pop_vs_LISS"
+}

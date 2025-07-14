@@ -1,6 +1,7 @@
 # name = fibo_metrics_for_ossc.py
 # background = this file is created for ossc but it is more debugged on RA machine jupyter notebook
-import os
+import os, sys
+import logging
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
@@ -13,22 +14,39 @@ import matplotlib.pyplot as plt
 from collections import Counter
 from itertools import count
 import itertools
+import json
 from scipy.stats import pearsonr, ks_2samp
 from scipy.spatial.distance import jensenshannon
+
+EMBEDDING_FILE = 'EMBEDDING_FILE'
+BACKGROUND_FILE = 'BACKGROUND_FILE'
+LISS_FILE = 'LISS_FILE'
+OUTPUT_DIR = 'OUTPUT_DIR'
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('fibo_spiral.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------
 # 1. Data loading
 # ----------------------------
 def load_data(embedding_file, background_file):
-    print("✅ Loading embedding data...")
+    logger.info("✅ Loading embedding data...")
     df_emb = pd.read_parquet(embedding_file)
     dim = len(df_emb.columns) - 1  # Exclude rinpersoon_id
-    print(f" - Dimension: {dim}")
-    print(f" - Rows: {len(df_emb)}, Columns: {list(df_emb.columns)}")
+    logger.info(f" - Dimension: {dim}")
+    logger.info(f" - Rows: {len(df_emb)}, Columns: {list(df_emb.columns)}")
 
-    print("✅ Loading background data...")
+    logger.info("✅ Loading background data...")
     df_bg = pd.read_csv(background_file) if background_file.split('.')[-1] == 'csv'  else pd.read_parquet(background_file)
-    print(f" - Rows: {len(df_bg)}, Columns: {list(df_bg.columns)}")
+    logger.info(f" - Rows: {len(df_bg)}, Columns: {list(df_bg.columns)}")
 
     # Ensure matching ID column names
     if df_emb.columns.isin(["rinpersoon_id"]).any():
@@ -36,12 +54,12 @@ def load_data(embedding_file, background_file):
     if df_bg.columns.isin(["rinpersoon_id"]).any():
         df_bg = df_bg.rename(columns={"rinpersoon_id": "RINPERSOON"})
 
-    print("✅ Joining on RINPERSOON...")
+    logger.info("✅ Joining on RINPERSOON...")
     df_merged = df_emb.merge(df_bg, on="RINPERSOON", how="inner")
-    print(f" - Joined rows: {len(df_merged)}")
+    logger.info(f" - Joined rows: {len(df_merged)}")
 
-    print(f"Embedding data # {len(df_emb)} rows, Unique IDs: {df_emb['RINPERSOON'].nunique()}")
-    print(f"Background data # {len(df_bg)} rows, Unique IDs: {df_bg['RINPERSOON'].nunique()}")
+    logger.info(f"Embedding data # {len(df_emb)} rows, Unique IDs: {df_emb['RINPERSOON'].nunique()}")
+    logger.info(f"Background data # {len(df_bg)} rows, Unique IDs: {df_bg['RINPERSOON'].nunique()}")
     return dim, df_merged
 
 # ----------------------------
@@ -226,11 +244,13 @@ def compute_ks(p, q):
 def compute_js(p, q):
     return jensenshannon(p, q)
 
+
+
 # ----------------------------
 # 6. Compare metadata distribution: Currently not in use
 # ----------------------------
 def compare_metadata_distribution(full_df, sample_df, variable):
-    print(f"\n📊 Comparing distribution for: {variable}")
+    logger.info(f"\n📊 Comparing distribution for: {variable}")
 
     full_counts = full_df[variable].value_counts(normalize=True).sort_index()
     sample_counts = sample_df[variable].value_counts(normalize=True).sort_index()
@@ -241,13 +261,13 @@ def compare_metadata_distribution(full_df, sample_df, variable):
     }).fillna(0)
     comparison["AbsDiff"] = (comparison["Full"] - comparison["Sample"]).abs()
 
-    print(comparison)
+    logger.info(comparison)
     return comparison
 
 def save_comparison_to_csv(comparison_df, variable, output_file):
     comparison_df.index.name = variable
     comparison_df.reset_index().to_csv(output_file, index=False)
-    print(f"✅ Comparison table saved to {output_file}")
+    logger.info(f"✅ Comparison table saved to {output_file}")
 
 def plot_comparison_distribution(comparison_df, variable, output_file):
     comparison_df = comparison_df.reset_index()
@@ -263,20 +283,27 @@ def plot_comparison_distribution(comparison_df, variable, output_file):
     plt.savefig(output_file)
     plt.close()
     
-    print(f"✅ Comparison plot saved to {output_file}")
+    logger.info(f"✅ Comparison plot saved to {output_file}")
 
+# Helper
+def read_json(path):
+  with open(path, 'r') as file:
+    data = json.load(file)
+  return data 
 
 # ----------------------------
 # 6. MAIN
 # ----------------------------
 def main():
+    CFG_PATH = sys.argv[1]
+    cfg = read_json(CFG_PATH)
     # -------- File paths --------
     
-    embedding_file = "/gpfs/ostor/ossc9424/data/eh/embedding_config_ossc.csv"
-    background_file = "/gpfs/ostor/ossc9424/data/llm/background_files/background.csv"
-    liss_file = "/gpfs/ostor/ossc9424/data/LISS/raw/liss_dataset.parquet"
+    embedding_file = cfg[EMBEDDING_FILE]
+    background_file = cfg[BACKGROUND_FILE]
+    liss_file = cfg[LISS_FILE]
 
-    output_dir = "fib_spiral_pop_vs_LISS"
+    output_dir = cfg[OUTPUT_DIR]
     output_dir = os.path.expanduser(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -289,7 +316,7 @@ def main():
     np.random.seed(42)
 
     embeddings_df = pd.read_csv(embedding_file)
-    num_buckets_list = [10, 100, 500, 1000, 2000]
+    num_buckets_list = [10, 100, 200] # 500, 1000, 2000 needs really huge time.
     samples_list = ['liss-people']  # sample sets
 
     param_grid = list(itertools.product(
@@ -306,27 +333,28 @@ def main():
         year = embedding_row.year
         file_path = embedding_row.file_path
 
-        print(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
+        logger.info(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
 
         # Load embeddings and background data for whole population
         dim, pop_embeddings = load_data(file_path, background_file)
-        print('Population Embeddings:', pop_embeddings.head())
+        logger.info('Population Embeddings:', pop_embeddings.head())
         emb_cols = [c for c in pop_embeddings.columns if c.startswith("emb")]
 
         if len(emb_cols) != dim:
+            logger.warning((f"Expected {dim} embedding columns, found {len(emb_cols)}"))
             raise ValueError(f"Expected {dim} embedding columns, found {len(emb_cols)}")
 
         df_liss = pd.read_parquet(liss_file)
-        print(df_liss.head())
+        logger.info(df_liss.head())
         liss_ids = df_liss['RINPERSOON'].unique()
         liss_ids_set = set(liss_ids)
 
         liss_embeddings = pop_embeddings[pop_embeddings['RINPERSOON'].isin(liss_ids_set)]
 
         # -------- Generate b=100 points on the d-dim sphere --------
-        sphere_pts = uniform_sphere(dim, b)
+        sphere_pts = uniform_sphere(dim, num_buckets)
         sphere_pts = np.array(sphere_pts)
-        print(f"✅ Sphere points generated: {sphere_pts.shape}")
+        logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
 
         # Existing stratification and bucketing logic
         pop_buckets = assign_buckets(pop_embeddings[emb_cols], sphere_pts)  # stratify_into_buckets(pop_embeddings, num_buckets)
@@ -364,7 +392,7 @@ def main():
     df = pd.DataFrame(results)
     # df.to_csv('sampling_metrics_summary.csv', index=False)
     df.to_csv(os.path.join(output_dir, 'metrics_summary.csv'), index=False)
-    print("✅ Sampling metrics saved to 'metrics_summary.csv'")
+    logger.info("✅ Sampling metrics saved to 'metrics_summary.csv'")
 
 '''
     # -------- Load & join --------
