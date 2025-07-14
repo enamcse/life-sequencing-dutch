@@ -309,7 +309,7 @@ def main():
 
     # -------- Config --------
     dim = 280 # embedding dimension default
-    b = 100   # number of sphere directions / buckets default
+    b = 100   # number of sphere directions / buckets default - using a list of num_buckets
     k = 1000  # sample size default - not in use now
     variables_to_compare = ["gender", "year", "month", "municipality"]
     random.seed(42)
