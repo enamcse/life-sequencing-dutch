@@ -4,5 +4,7 @@
   "LISS_FILE": "/gpfs/ostor/ossc9424/data/LISS/raw/liss_dataset.parquet",
   "OUTPUT_DIR": "/gpfs/ostor/ossc9424/data/eh/fib_spiral_pop_vs_LISS",
   "OUTPUT_POP_BUCKET_ID": 1,
-  "OUTPUT_LISS_BUCKET_ID": 1
+  "OUTPUT_LISS_BUCKET_ID": 1,
+  "OUTPUT_BUCKET_SUMMARY": 1,
+  "OUTPUT_RINPERSOON_YEAR_BUCKET": 1
 }
