@@ -94,8 +94,8 @@ class Evaluator:
         cos_aligned = self.pairwise_cosines(aligned_vectors, aligned_vectors[permutation])
 
         # Compute Pearson and Spearman correlations between those similarities
-        pearson_corr, pearson_pval = pearsonr(cos_target, cos_aligned)
-        spearman_corr, spearman_pval = spearmanr(cos_target, cos_aligned)
+        pearson_corr, pearson_pval = pearsonr(cos_target, cos_aligned, alternative='greater')
+        spearman_corr, spearman_pval = spearmanr(cos_target, cos_aligned, alternative='greater')
 
         return CorrelationMetrics(
             pearson=pearson_corr,
