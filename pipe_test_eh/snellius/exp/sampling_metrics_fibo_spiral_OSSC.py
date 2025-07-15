@@ -23,9 +23,10 @@ from collections import Counter
 from itertools import count
 import itertools
 import json
-from scipy.stats import pearsonr, ks_2samp, chisquare, wasserstein_distance, entropy
+from scipy.stats import pearsonr, ks_2samp, chisquare, wasserstein_distance, entropy, spearmanr
 from scipy.spatial.distance import jensenshannon, cosine
 import torch
+from dataclasses import dataclass
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
@@ -38,6 +39,7 @@ OUTPUT_RINPERSOON_YEAR_BUCKET = 'OUTPUT_RINPERSOON_YEAR_BUCKET'
 SPHERE_POINTS_DIR = 'SPHERE_POINTS_DIR'
 NUM_BUCKETS_LIST = 'NUM_BUCKETS_LIST'
 DO_WHITENING = 'DO_WHITENING'
+DO_WHITENING_CORR = 'DO_WHITENING_CORR'
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,9 +64,44 @@ def whitening_torch_final(embeddings):
     return embeddings
 
 # ----------------------------
+# 0. Evaluation Helper
+# ----------------------------
+@dataclass
+class CorrelationMetrics:
+    pearson: float
+    spearman: float
+
+class Evaluator:
+    """Computes correlation metrics on a validation set."""
+
+    def __init__(self, rng: np.random.Generator):
+        self._rng = rng
+
+    def pairwise_cosines(self, vectors: np.ndarray, permuted_vectors: np.ndarray) -> np.ndarray:
+        """Vectorised cosine similarity for two aligned matrices."""
+        dot = np.sum(vectors * permuted_vectors, axis=1)
+        norms = np.linalg.norm(vectors, axis=1) * np.linalg.norm(permuted_vectors, axis=1)
+        return dot / norms
+
+    def correlation(self, target_vectors: np.ndarray, aligned_vectors: np.ndarray) -> CorrelationMetrics:
+        n = target_vectors.shape[0]
+        permutation = self._rng.permutation(n)
+
+        # Compute cosine similarities for permuted pairs
+        cos_target = self.pairwise_cosines(target_vectors, target_vectors[permutation])
+        cos_aligned = self.pairwise_cosines(aligned_vectors, aligned_vectors[permutation])
+
+        # Compute Pearson and Spearman correlations between those similarities
+        pearson_corr = pearsonr(cos_target, cos_aligned).statistic
+        spearman_corr = spearmanr(cos_target, cos_aligned).correlation
+
+        return CorrelationMetrics(pearson=pearson_corr, spearman=spearman_corr)
+
+
+# ----------------------------
 # 1. Data loading
 # ----------------------------
-def load_data(embedding_file, background_file, cfg):
+def load_data(embedding_file, background_file, cfg, emb_type=None):
     logger.info("✅ Loading embedding data...")
     df_emb = pd.read_parquet(embedding_file)
     dim = len(df_emb.columns) - 1  # Exclude rinpersoon_id
@@ -80,6 +117,9 @@ def load_data(embedding_file, background_file, cfg):
         logger.info(f" - Meta columns: {meta_cols}")
         logger.info(f" - Embedding columns: {embedding_cols}")
 
+        # preserving for correlation calculation later
+        if cfg.get("DO_WHITENING_CORR", 0):
+            emb_before_whitening = df_emb[embedding_cols].copy()
         emb_tensor = torch.tensor(df_emb[embedding_cols].values, dtype=torch.float32)
 
         # Whitening
@@ -103,6 +143,38 @@ def load_data(embedding_file, background_file, cfg):
         df_emb = df_emb_whitened[meta_cols + embedding_cols]
 
         logger.info("✅ Whitening complete")
+
+        # ✅ Compute correlation if flag set
+        if cfg.get("DO_WHITENING_CORR", 0):
+            logger.info("✅ Evaluating whitening distortion (correlation)")
+            try:
+                output_dir = cfg["OUTPUT_DIR"]
+                os.makedirs(output_dir, exist_ok=True)
+
+                emb_after_whitening = df_emb[embedding_cols]
+
+                before_array = emb_before_whitening.values
+                after_array = emb_after_whitening.values
+
+                evaluator = Evaluator()
+                corr_metrics = evaluator.correlation(before_array, after_array)
+
+                logger.info(f"✅ Whitening Correlation - Pearson: {corr_metrics.pearson:.4f}, Spearman: {corr_metrics.spearman:.4f}")
+
+                emb_name = emb_type if emb_type else "default"
+                corr_file = os.path.join(output_dir, f"whitening_corr_{emb_name}.csv")
+
+                pd.DataFrame([{
+                    "embedding_name": emb_name,
+                    "pearson": corr_metrics.pearson,
+                    "spearman": corr_metrics.spearman
+                }]).to_csv(corr_file, index=False)
+
+                logger.info(f"✅ Whitening correlation metrics saved to {corr_file}")
+
+            except Exception as e:
+                logger.error(f"❌ Error computing whitening correlation: {e}")
+        
     else:
         logger.info("⚠️  Whitening skipped (DO_WHITENING=0)")
 
@@ -465,7 +537,7 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         logger.info(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
 
         # Load embeddings and background data for whole population
-        dim, pop_embeddings = load_data(file_path, background_file, cfg)
+        dim, pop_embeddings = load_data(file_path, background_file, cfg, emb_type)
         logger.info(f'Population Embeddings:\n{pop_embeddings.head()}')
         emb_cols = [c for c in pop_embeddings.columns if c.startswith("emb")]
 
