@@ -31,7 +31,7 @@ def main():
     plt.bar(x_values, df_sorted['PopPct'])
     plt.xticks(ticks=range(0, len(x_values)+1, 10))
     plt.xlabel('Buckets (sorted by Populations Percentage)')
-    plt.ylabel('Population Percentage')
+    plt.ylabel('Population Franction')
     plt.title(f'Population Distribution Among Buckets - Year {year}')
     plt.tight_layout()
 
@@ -51,7 +51,7 @@ def main():
     plt.ylim(bottom=0)
 
     plt.xlabel('Buckets (sorted by Populations Percentage)')
-    plt.ylabel('Cumulative Population Percentage')
+    plt.ylabel('Cumulative Population Fraction')
     plt.title(f'Cumulative Distribution Function (CDF) - Year {year}')
     plt.tight_layout()
 

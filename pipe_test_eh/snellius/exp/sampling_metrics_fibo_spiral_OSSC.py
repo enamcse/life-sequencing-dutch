@@ -107,7 +107,7 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
     dim = len(df_emb.columns) - 1  # Exclude rinpersoon_id
     logger.info(f" - Dimension: {dim}")
     logger.info(f" - Rows: {len(df_emb)}, Columns: {list(df_emb.columns)}")
-    if cfg.get("DO_WHITENING", 0):
+    if cfg.get(DO_WHITENING, 0):
         logger.info("✅ Whitening embeddings as per config")
 
         # Identify embedding columns
@@ -145,10 +145,10 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
         logger.info("✅ Whitening complete")
 
         # ✅ Compute correlation if flag set
-        if cfg.get("DO_WHITENING_CORR", 0):
+        if cfg.get(DO_WHITENING_CORR, 0):
             logger.info("✅ Evaluating whitening distortion (correlation)")
             try:
-                output_dir = cfg["OUTPUT_DIR"]
+                output_dir = cfg[OUTPUT_DIR]
                 os.makedirs(output_dir, exist_ok=True)
 
                 emb_after_whitening = df_emb[embedding_cols]
@@ -156,7 +156,8 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
                 before_array = emb_before_whitening.values
                 after_array = emb_after_whitening.values
 
-                evaluator = Evaluator()
+                rng = np.random.default_rng(seed=42)
+                evaluator = Evaluator(rng)
                 corr_metrics = evaluator.correlation(before_array, after_array)
 
                 logger.info(f"✅ Whitening Correlation - Pearson: {corr_metrics.pearson:.4f}, Spearman: {corr_metrics.spearman:.4f}")
