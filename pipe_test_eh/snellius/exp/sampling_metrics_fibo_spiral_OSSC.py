@@ -168,6 +168,8 @@ def load_or_compute_sphere(dim, num_buckets, sphere_dir):
         return np.load(filename)
     logger.info(f"⚠️  Sphere points not found, computing...")
     pts = uniform_sphere(dim, num_buckets)
+
+    os.makedirs(sphere_dir, exist_ok=True)
     np.save(filename, pts)
     logger.info(f"✅ Saved sphere points to {filename}")
     return pts
