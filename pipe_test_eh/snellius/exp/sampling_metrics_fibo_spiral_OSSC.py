@@ -70,6 +70,8 @@ def whitening_torch_final(embeddings):
 class CorrelationMetrics:
     pearson: float
     spearman: float
+    pearson_pval: float
+    spearman_pval: float
 
 class Evaluator:
     """Computes correlation metrics on a validation set."""
@@ -92,10 +94,15 @@ class Evaluator:
         cos_aligned = self.pairwise_cosines(aligned_vectors, aligned_vectors[permutation])
 
         # Compute Pearson and Spearman correlations between those similarities
-        pearson_corr = pearsonr(cos_target, cos_aligned).statistic
-        spearman_corr = spearmanr(cos_target, cos_aligned).correlation
+        pearson_corr, pearson_pval = pearsonr(cos_target, cos_aligned)
+        spearman_corr, spearman_pval = spearmanr(cos_target, cos_aligned)
 
-        return CorrelationMetrics(pearson=pearson_corr, spearman=spearman_corr)
+        return CorrelationMetrics(
+            pearson=pearson_corr,
+            spearman=spearman_corr,
+            pearson_pval=pearson_pval,
+            spearman_pval=spearman_pval
+        )
 
 
 # ----------------------------
@@ -161,6 +168,7 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
                 corr_metrics = evaluator.correlation(before_array, after_array)
 
                 logger.info(f"✅ Whitening Correlation - Pearson: {corr_metrics.pearson:.4f}, Spearman: {corr_metrics.spearman:.4f}")
+                logger.info(f" - Pearson p-value: {corr_metrics.pearson_pval:.4f}, Spearman p-value: {corr_metrics.spearman_pval:.4f}")
 
                 emb_name = emb_type if emb_type else "default"
                 corr_file = os.path.join(output_dir, f"whitening_corr_{emb_name}.csv")
@@ -168,7 +176,9 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
                 pd.DataFrame([{
                     "embedding_name": emb_name,
                     "pearson": corr_metrics.pearson,
-                    "spearman": corr_metrics.spearman
+                    "spearman": corr_metrics.spearman,
+                    "pearson_pval": corr_metrics.pearson_pval,
+                    "spearman_pval": corr_metrics.spearman_pval
                 }]).to_csv(corr_file, index=False)
 
                 logger.info(f"✅ Whitening correlation metrics saved to {corr_file}")
