@@ -23,13 +23,14 @@ def main():
 
     # Sort by PopPct descending
     df_sorted = df.sort_values(by='PopPct', ascending=False).reset_index(drop=True)
+    x_values = df_sorted.index + 1
 
     print("✅ Generating Population Distribution plot...")
 
     plt.figure(figsize=(12,6))
-    plt.bar(df_sorted['BucketID'].astype(str), df_sorted['PopPct'])
-    plt.xticks(rotation=90)
-    plt.xlabel('BucketID (sorted by PopPct descending)')
+    plt.bar(x_values, df_sorted['PopPct'])
+    plt.xticks(ticks=range(0, len(x_values)+1, 10))
+    plt.xlabel('Buckets (sorted by Populations Percentage)')
     plt.ylabel('Population Percentage')
     plt.title(f'Population Distribution Among Buckets - Year {year}')
     plt.tight_layout()
@@ -45,9 +46,11 @@ def main():
     print("✅ Generating CDF plot...")
 
     plt.figure(figsize=(12,6))
-    plt.plot(df_sorted['BucketID'].astype(str), df_sorted['PopPct_cumsum'], marker='o')
-    plt.xticks(rotation=90)
-    plt.xlabel('BucketID (sorted by PopPct descending)')
+    plt.plot(x_values, df_sorted['PopPct_cumsum'], marker='o')
+    plt.xticks(ticks=range(0, len(x_values)+1, 10))
+    plt.ylim(bottom=0)
+
+    plt.xlabel('Buckets (sorted by Populations Percentage)')
     plt.ylabel('Cumulative Population Percentage')
     plt.title(f'Cumulative Distribution Function (CDF) - Year {year}')
     plt.tight_layout()
