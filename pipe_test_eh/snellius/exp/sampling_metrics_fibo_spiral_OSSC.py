@@ -1,6 +1,14 @@
 # name = fibo_metrics_for_ossc.py
 # background = this file is created for ossc but it is more debugged on RA machine jupyter notebook
-import os, sys
+# The following lines should be run in a terminal:
+# <array_jobid> should be replaced with the actual job ID from the sbatch command.
+# sbatch --array=0-13 sampling_metrics_fibo_spiral_OSSC.sh
+# sbatch --dependency=afterok:<array_jobid> sampling_metrics_fibo_spiral_OSSC_post_merge.sh
+
+import argparse
+import os
+import sys
+import traceback
 import logging
 import pandas as pd
 import numpy as np
@@ -26,6 +34,8 @@ OUTPUT_POP_BUCKET_ID = 'OUTPUT_POP_BUCKET_ID'
 OUTPUT_LISS_BUCKET_ID = 'OUTPUT_LISS_BUCKET_ID'
 OUTPUT_BUCKET_SUMMARY = 'OUTPUT_BUCKET_SUMMARY'
 OUTPUT_RINPERSOON_YEAR_BUCKET = 'OUTPUT_RINPERSOON_YEAR_BUCKET'
+SPHERE_POINTS_DIR = 'SPHERE_POINTS_DIR'
+NUM_BUCKETS_LIST = 'NUM_BUCKETS_LIST'
 
 logging.basicConfig(
     level=logging.INFO,
@@ -147,6 +157,20 @@ def uniform_sphere(d: int, n: int) -> List[List[float]]:
                 points[i][j] *= sin(deg)
             points[i][dim] *= cos(deg)
     return points
+
+def load_or_compute_sphere(dim, num_buckets, sphere_dir):
+    filename = os.path.join(
+        sphere_dir,
+        f"sphere_{dim}D_{num_buckets}pts.npy"
+    )
+    if os.path.exists(filename):
+        logger.info(f"✅ Loading cached sphere points from {filename}")
+        return np.load(filename)
+    logger.info(f"⚠️  Sphere points not found, computing...")
+    pts = uniform_sphere(dim, num_buckets)
+    np.save(filename, pts)
+    logger.info(f"✅ Saved sphere points to {filename}")
+    return pts
 
 # ----------------------------
 # 3. Cone / Bucket assignment
@@ -359,254 +383,260 @@ def read_json(path):
     data = json.load(file)
   return data 
 
-# ----------------------------
-# 6. MAIN
-# ----------------------------
-def main():
-    CFG_PATH = sys.argv[1]
-    cfg = read_json(CFG_PATH)
-    # -------- File paths --------
-    
+def build_param_grid(cfg):
     embedding_file = cfg[EMBEDDING_FILE]
-    background_file = cfg[BACKGROUND_FILE]
-    liss_file = cfg[LISS_FILE]
-
-    output_dir = cfg[OUTPUT_DIR]
-    output_dir = os.path.expanduser(output_dir)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # -------- Config --------
-    dim = 280 # embedding dimension default
-    b = 100   # number of sphere directions / buckets default - using a list of num_buckets
-    k = 1000  # sample size default - not in use now
-    variables_to_compare = ["gender", "year", "month", "municipality"]
-    random.seed(42)
-    np.random.seed(42)
-
     embeddings_df = pd.read_csv(embedding_file)
-    num_buckets_list = [10, 100, 200] # 500, 1000, 2000 needs really huge time.
+    num_buckets_list = cfg[NUM_BUCKETS_LIST]
     samples_list = ['liss-people']  # sample sets
 
-    param_grid = list(itertools.product(
+    return list(itertools.product(
         embeddings_df.itertuples(index=False),
         num_buckets_list,
         samples_list
     ))
 
-    results = []
-
-    for (embedding_row, num_buckets, sample) in param_grid:
-        try:
-            # Load embeddings from CSV info
-            emb_type = embedding_row.embedding_name
-            year = embedding_row.year
-            file_path = embedding_row.file_path
-
-            logger.info(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
-
-            # Load embeddings and background data for whole population
-            dim, pop_embeddings = load_data(file_path, background_file)
-            logger.info(f'Population Embeddings:\n{pop_embeddings.head()}')
-            emb_cols = [c for c in pop_embeddings.columns if c.startswith("emb")]
-
-            if len(emb_cols) != dim:
-                logger.warning((f"Expected {dim} embedding columns, found {len(emb_cols)}"))
-                raise ValueError(f"Expected {dim} embedding columns, found {len(emb_cols)}")
-
-            df_liss = pd.read_parquet(liss_file)
-            logger.info(f'LISS Embeddings:\n{df_liss.head()}')
-            liss_ids = df_liss['RINPERSOON'].unique()
-            liss_ids_set = set(liss_ids)
-
-            liss_embeddings = pop_embeddings[pop_embeddings['RINPERSOON'].isin(liss_ids_set)]
-
-            # -------- Generate b=100 points on the d-dim sphere --------
-            sphere_pts = uniform_sphere(dim, num_buckets)
-            sphere_pts = np.array(sphere_pts)
-            logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
-
-            # --------------- STRATIFICATION -----------------
-            pop_buckets = assign_buckets(pop_embeddings[emb_cols], sphere_pts)
-            liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
-
-            # ---------- SAVE BUCKET IF NEEDED --------------
-            embedding_file_base = emb_type # os.path.splitext(os.path.basename(file_path))[0]
-
-            if cfg.get(OUTPUT_POP_BUCKET_ID, 0):
-                pop_buckets_output = pd.DataFrame({
-                    'RINPERSOON': pop_embeddings['RINPERSOON'],
-                    'BucketID': pop_buckets
-                })
-                pop_buckets_output_filename = f"pop_bucket_ids_{embedding_file_base}_buckets{num_buckets}.csv"
-                pop_buckets_output.to_csv(os.path.join(output_dir, pop_buckets_output_filename), index=False)
-                logger.info(f"✅ Population bucket IDs saved to '{pop_buckets_output_filename}'")
-
-            if cfg.get(OUTPUT_LISS_BUCKET_ID, 0):
-                liss_buckets_output = pd.DataFrame({
-                    'RINPERSOON': liss_embeddings['RINPERSOON'],
-                    'BucketID': liss_buckets
-                })
-                liss_buckets_output_filename = f"liss_bucket_ids_{embedding_file_base}_buckets{num_buckets}.csv"
-                liss_buckets_output.to_csv(os.path.join(output_dir, liss_buckets_output_filename), index=False)
-                logger.info(f"✅ LISS bucket IDs saved to '{liss_buckets_output_filename}'")
-
-            # --------------- COUNTS & PROBABILITIES -----------------
-            pop_counts = [0] * num_buckets
-            for bid in pop_buckets:
-                pop_counts[bid] += 1
-            liss_counts = [0] * num_buckets
-            for bid in liss_buckets:
-                liss_counts[bid] += 1
-
-            pop_total = sum(pop_counts)
-            liss_total = sum(liss_counts)
-
-            pop_probs = [c / pop_total for c in pop_counts]
-            liss_probs = [c / liss_total for c in liss_counts]
-
-            # --------------- SAVE BUCKET SUMMARY -----------------
-            if cfg.get(OUTPUT_BUCKET_SUMMARY, 0):
-                bucket_df = pd.DataFrame({
-                    'BucketID': list(range(num_buckets)),
-                    'PopCount': pop_counts,
-                    'LISSCount': liss_counts,
-                    'PopPct': pop_probs,
-                    'LISSPct': liss_probs
-                })
-                bucket_df['DiffPct'] = bucket_df['PopPct'] - bucket_df['LISSPct']
-                bucket_df['AbsDiffPct'] = bucket_df['DiffPct'].abs()
-
-                summary_filename = f"bucket_summary_{embedding_file_base}_buckets{num_buckets}.csv"
-                bucket_df.to_csv(os.path.join(output_dir, summary_filename), index=False)
-                logger.info(f"✅ Bucket summary saved to '{summary_filename}'")
-
-            # --------------- POPULATION RINPERSOON-YEAR-BUCKET -----------------
-            if cfg.get(OUTPUT_RINPERSOON_YEAR_BUCKET, 0):
-                pop_bucket_df = pd.DataFrame({
-                    'RINPERSOON': pop_embeddings['RINPERSOON'],
-                    'YEAR': embedding_row.year,
-                    'BUCKET_ID': pop_buckets
-                })
-                pop_filename = f"population_rinpersoon_year_bucket_{embedding_file_base}_buckets{num_buckets}.csv"
-                pop_bucket_df.to_csv(os.path.join(output_dir, pop_filename), index=False)
-                logger.info(f"✅ Population RINPERSOON-YEAR-BUCKET saved to '{pop_filename}'")
-
-            # --------------- SAMPLES FOR KS/WASSERSTEIN -----------------
-            pop_samples = expand_counts_to_samples(pop_counts)
-            liss_samples = expand_counts_to_samples(liss_counts)
-
-
-            # --------------- METRIC COMPUTATION -----------------
-
-            pearson_corr = compute_pearson(pop_probs, liss_probs)
-            ks_div = compute_ks_from_samples(pop_samples, liss_samples)
-            js_div = compute_js(pop_probs, liss_probs)
-            kl_div = compute_kl(pop_probs, liss_probs)
-            chi_square_stat = compute_chi_square(pop_counts, liss_counts)
-            wasserstein_dist = compute_wasserstein(pop_samples, liss_samples)
-            hellinger_dist = compute_hellinger(pop_probs, liss_probs)
-            cosine_sim = compute_cosine_similarity(pop_probs, liss_probs)
-
-            pop_entropy = compute_entropy(pop_probs)
-            liss_entropy = compute_entropy(liss_probs)
-            pop_gini = compute_gini(pop_counts)
-            liss_gini = compute_gini(liss_counts)
-
-            # --------------- COVERAGE -----------------
-            coverage_threshold = 1e-6
-            buckets_covered_pop = compute_coverage(pop_probs, threshold=coverage_threshold)
-            buckets_covered_liss = compute_coverage(liss_probs, threshold=coverage_threshold)
-
-            max_pct_pop = max(pop_probs)
-            max_pct_liss = max(liss_probs)
-
-            # --------------- FRACTIONAL COVERAGE -----------------
-            buckets_to_cover_90_pop = buckets_to_cover_fraction(pop_probs, 0.90)
-            buckets_to_cover_90_liss = buckets_to_cover_fraction(liss_probs, 0.90)
-
-
-            # --------------- SAVE RESULTS -----------------
-            results.append({
-                'embedding_type': emb_type,
-                'year': year,
-                'num_buckets': num_buckets,
-                'samples': sample,
-                'pearson_corr': pearson_corr,
-                'ks_div': ks_div,
-                'js_div': js_div,
-                'kl_div': kl_div,
-                'chi_square': chi_square_stat,
-                'wasserstein': wasserstein_dist,
-                'hellinger': hellinger_dist,
-                'cosine_sim': cosine_sim,
-                'pop_entropy': pop_entropy,
-                'liss_entropy': liss_entropy,
-                'pop_gini': pop_gini,
-                'liss_gini': liss_gini,
-                'max_pct_pop': max_pct_pop,
-                'max_pct_liss': max_pct_liss,
-                'buckets_covered_pop': buckets_covered_pop,
-                'buckets_covered_liss': buckets_covered_liss,
-                'buckets_to_cover_90_pop': buckets_to_cover_90_pop,
-                'buckets_to_cover_90_liss': buckets_to_cover_90_liss
-            })
-        except Exception as e:
-            logger.error(f"❌ Failed for {embedding_row.embedding_name}, {embedding_row.year}, {num_buckets}: {e}", exc_info=True)
-            continue
-
+# ----------------------------
+# 7. Embedding Processing Function
+# ----------------------------
+def process_embedding(embedding_row, num_buckets, sample, cfg):
     try:
-        df = pd.DataFrame(results)
-        df.to_csv(os.path.join(output_dir, 'metrics_summary.csv'), index=False)
-        logger.info("✅ Sampling metrics saved to 'metrics_summary.csv'")
+        # ----- Load configuration and data -----
+        emb_type = embedding_row.embedding_name
+        year = embedding_row.year
+        file_path = embedding_row.file_path
+
+        background_file = cfg[BACKGROUND_FILE]
+        liss_file = cfg[LISS_FILE]
+        output_dir = os.path.expanduser(cfg[OUTPUT_DIR])
+        os.makedirs(output_dir, exist_ok=True)
+        sphere_dir = cfg.get(SPHERE_POINTS_DIR, output_dir)
+
+        logger.info(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
+
+        # Load embeddings and background data for whole population
+        dim, pop_embeddings = load_data(file_path, background_file)
+        logger.info(f'Population Embeddings:\n{pop_embeddings.head()}')
+        emb_cols = [c for c in pop_embeddings.columns if c.startswith("emb")]
+
+        if len(emb_cols) != dim:
+            logger.warning((f"Expected {dim} embedding columns, found {len(emb_cols)}"))
+            raise ValueError(f"Expected {dim} embedding columns, found {len(emb_cols)}")
+
+        # Load LISS dataset
+        df_liss = pd.read_parquet(liss_file)
+        logger.info(f'LISS Embeddings:\n{df_liss.head()}')
+        liss_ids = df_liss['RINPERSOON'].unique()
+        liss_ids_set = set(liss_ids)
+
+        liss_embeddings = pop_embeddings[pop_embeddings['RINPERSOON'].isin(liss_ids_set)]
+
+        # Generate or load sphere points
+        sphere_pts = load_or_compute_sphere(dim, num_buckets, sphere_dir)
+        sphere_pts = np.array(sphere_pts)
+        logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
+
+        # --------------- STRATIFICATION -----------------
+        pop_buckets = assign_buckets(pop_embeddings[emb_cols], sphere_pts)
+        liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
+
+        # ---------- SAVE BUCKET IF NEEDED --------------
+        embedding_file_base = emb_type
+
+        if cfg.get(OUTPUT_POP_BUCKET_ID, 0):
+            pop_buckets_output = pd.DataFrame({
+                'RINPERSOON': pop_embeddings['RINPERSOON'],
+                'BucketID': pop_buckets
+            })
+            pop_buckets_output_filename = f"pop_bucket_ids_{embedding_file_base}_buckets{num_buckets}.csv"
+            pop_buckets_output.to_csv(os.path.join(output_dir, pop_buckets_output_filename), index=False)
+            logger.info(f"✅ Population bucket IDs saved to '{pop_buckets_output_filename}'")
+
+        if cfg.get(OUTPUT_LISS_BUCKET_ID, 0):
+            liss_buckets_output = pd.DataFrame({
+                'RINPERSOON': liss_embeddings['RINPERSOON'],
+                'BucketID': liss_buckets
+            })
+            liss_buckets_output_filename = f"liss_bucket_ids_{embedding_file_base}_buckets{num_buckets}.csv"
+            liss_buckets_output.to_csv(os.path.join(output_dir, liss_buckets_output_filename), index=False)
+            logger.info(f"✅ LISS bucket IDs saved to '{liss_buckets_output_filename}'")
+
+        # --------------- COUNTS & PROBABILITIES -----------------
+        pop_counts = [0] * num_buckets
+        for bid in pop_buckets:
+            pop_counts[bid] += 1
+        liss_counts = [0] * num_buckets
+        for bid in liss_buckets:
+            liss_counts[bid] += 1
+
+        pop_total = sum(pop_counts)
+        liss_total = sum(liss_counts)
+
+        pop_probs = [c / pop_total for c in pop_counts]
+        liss_probs = [c / liss_total for c in liss_counts]
+
+        # --------------- SAVE BUCKET SUMMARY -----------------
+        if cfg.get(OUTPUT_BUCKET_SUMMARY, 0):
+            bucket_df = pd.DataFrame({
+                'BucketID': list(range(num_buckets)),
+                'PopCount': pop_counts,
+                'LISSCount': liss_counts,
+                'PopPct': pop_probs,
+                'LISSPct': liss_probs
+            })
+            bucket_df['DiffPct'] = bucket_df['PopPct'] - bucket_df['LISSPct']
+            bucket_df['AbsDiffPct'] = bucket_df['DiffPct'].abs()
+
+            summary_filename = f"bucket_summary_{embedding_file_base}_buckets{num_buckets}.csv"
+            bucket_df.to_csv(os.path.join(output_dir, summary_filename), index=False)
+            logger.info(f"✅ Bucket summary saved to '{summary_filename}'")
+
+        # --------------- RINPERSOON-YEAR-BUCKET -----------------
+        if cfg.get(OUTPUT_RINPERSOON_YEAR_BUCKET, 0):
+            pop_bucket_df = pd.DataFrame({
+                'RINPERSOON': pop_embeddings['RINPERSOON'],
+                'YEAR': embedding_row.year,
+                'BUCKET_ID': pop_buckets
+            })
+            pop_filename = f"population_rinpersoon_year_bucket_{embedding_file_base}_buckets{num_buckets}.csv"
+            pop_bucket_df.to_csv(os.path.join(output_dir, pop_filename), index=False)
+            logger.info(f"✅ Population RINPERSOON-YEAR-BUCKET saved to '{pop_filename}'")
+
+        # --------------- SAMPLES FOR KS/WASSERSTEIN -----------------
+        pop_samples = expand_counts_to_samples(pop_counts)
+        liss_samples = expand_counts_to_samples(liss_counts)
+
+        # --------------- METRIC COMPUTATION -----------------
+        pearson_corr = compute_pearson(pop_probs, liss_probs)
+        ks_div = compute_ks_from_samples(pop_samples, liss_samples)
+        js_div = compute_js(pop_probs, liss_probs)
+        kl_div = compute_kl(pop_probs, liss_probs)
+        chi_square_stat = compute_chi_square(pop_counts, liss_counts)
+        wasserstein_dist = compute_wasserstein(pop_samples, liss_samples)
+        hellinger_dist = compute_hellinger(pop_probs, liss_probs)
+        cosine_sim = compute_cosine_similarity(pop_probs, liss_probs)
+
+        pop_entropy = compute_entropy(pop_probs)
+        liss_entropy = compute_entropy(liss_probs)
+        pop_gini = compute_gini(pop_counts)
+        liss_gini = compute_gini(liss_counts)
+
+        # --------------- COVERAGE -----------------
+        coverage_threshold = 1e-6
+        buckets_covered_pop = compute_coverage(pop_probs, threshold=coverage_threshold)
+        buckets_covered_liss = compute_coverage(liss_probs, threshold=coverage_threshold)
+
+        max_pct_pop = max(pop_probs)
+        max_pct_liss = max(liss_probs)
+
+        # --------------- FRACTIONAL COVERAGE -----------------
+        buckets_to_cover_90_pop = buckets_to_cover_fraction(pop_probs, 0.90)
+        buckets_to_cover_90_liss = buckets_to_cover_fraction(liss_probs, 0.90)
+
+        # --------------- SAVE RESULTS -----------------
+        return {
+            'embedding_type': emb_type,
+            'year': year,
+            'num_buckets': num_buckets,
+            'samples': sample,
+            'pearson_corr': pearson_corr,
+            'ks_div': ks_div,
+            'js_div': js_div,
+            'kl_div': kl_div,
+            'chi_square': chi_square_stat,
+            'wasserstein': wasserstein_dist,
+            'hellinger': hellinger_dist,
+            'cosine_sim': cosine_sim,
+            'pop_entropy': pop_entropy,
+            'liss_entropy': liss_entropy,
+            'pop_gini': pop_gini,
+            'liss_gini': liss_gini,
+            'max_pct_pop': max_pct_pop,
+            'max_pct_liss': max_pct_liss,
+            'buckets_covered_pop': buckets_covered_pop,
+            'buckets_covered_liss': buckets_covered_liss,
+            'buckets_to_cover_90_pop': buckets_to_cover_90_pop,
+            'buckets_to_cover_90_liss': buckets_to_cover_90_liss
+        }
     except Exception as e:
-        logger.error(f"❌ Failed to save metrics_summary.csv: {e}")
-
-'''
-    # -------- Load & join --------
-
-    df = load_data(embedding_file, background_file)
-    
-
-    # -------- Extract embeddings --------
-    emb_cols = [c for c in df.columns if c.startswith("emb")]
-    embeddings = df[emb_cols].to_numpy()
-    person_ids = df["rinpersoon_id"].tolist()
-
-    # -------- Generate b=100 points on the d-dim sphere --------
-    sphere_pts = uniform_sphere(dim, b)
-    sphere_pts = np.array(sphere_pts)
-    print(f"✅ Sphere points generated: {sphere_pts.shape}")
-
-    # -------- Assign people to buckets via cosine sim --------
-    bucket_ids = assign_buckets(embeddings, sphere_pts)
-    df["bucket"] = bucket_ids
-    # Bucket count
-    bucket_count = Counter(bucket_ids)
-    print(f"✅ Buckets assigned: {len(bucket_count)} unique buckets")
-    print(f"Bucket distribution: {bucket_count}")
-    print("✅ Buckets assigned")
-
-    # -------- Sample k=1000 people proportionally from buckets --------
-    sampled_ids = bucket_sampling(person_ids, bucket_ids, k)
-    sampled_df = df[df["rinpersoon_id"].isin(sampled_ids)]
-    print("✅ People sampled")
-
-    # -------- Compare distributions --------
-    for variable in variables_to_compare:
-        print(f"\n✅ Comparing distribution for: {variable}")
-        comparison_df = compare_metadata_distribution(df, sampled_df, variable)
-
-        # Save CSV
-        csv_file = os.path.join(output_dir, f"comparison_{variable}.csv")
-        save_comparison_to_csv(comparison_df, variable, csv_file)
-
-        # Save Plot
-        plot_file = os.path.join(output_dir, f"comparison_{variable}.png")
-        plot_comparison_distribution(comparison_df, variable, plot_file)
-'''
+        logger.error(f"❌ Failed for {embedding_row.embedding_name}, {embedding_row.year}, {num_buckets}: {e}", exc_info=True)
+        return None
 
 # ----------------------------
 # Entry point
 # ----------------------------
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("cfgfile", help="Path to your JSON config")
+    parser.add_argument("--index", type=int, default=None, help="Array task index (Slurm) or None for serial")
+    args = parser.parse_args()
+
+    # Load config
+    try:
+        logger.info(f"✅ Loading config: {args.cfgfile}")
+        cfg = read_json(args.cfgfile)
+    except Exception as e:
+        logger.error(f"❌ Failed to load config file: {e}")
+        sys.exit(1)
+
+    # Build param grid
+    try:
+        param_grid = build_param_grid(cfg)
+        total_jobs = len(param_grid)
+        logger.info(f"✅ Parameter grid has {total_jobs} jobs.")
+    except Exception as e:
+        logger.error(f"❌ Failed to build parameter grid: {e}")
+        sys.exit(1)
+
+    # Decide on array or serial mode
+    if args.index is None:
+        logger.info("✅ No --index given: running ALL jobs in SERIAL mode")
+        results = []
+        for i, (embedding_row, num_buckets, sample) in enumerate(param_grid):
+            try:
+                logger.info(f"▶️ [Serial] Processing job {i+1}/{total_jobs}: {embedding_row.embedding_name}")
+                res = process_embedding(embedding_row, num_buckets, sample, cfg)
+                if res is not None:
+                    results.append(res)
+            except Exception as e:
+                logger.error(f"❌ Error processing job {i}: {e}")
+                logger.error(traceback.format_exc())
+                continue
+
+        # Save all results
+        if results:
+            try:
+                output_dir = cfg["OUTPUT_DIR"]
+                os.makedirs(output_dir, exist_ok=True)
+                df = pd.DataFrame(results)
+                df.to_csv(os.path.join(output_dir, 'metrics_summary.csv'), index=False)
+                logger.info("✅ All metrics saved to 'metrics_summary.csv'")
+            except Exception as e:
+                logger.error(f"❌ Failed to save metrics_summary.csv: {e}")
+
+    else:
+        # Array mode: run only one index
+        i = args.index
+        if i < 0 or i >= len(param_grid):
+            logger.error(f"❌ Invalid index {i}. Must be between 0 and {len(param_grid)-1}. Exiting.")
+            sys.exit(1)
+
+        embedding_row, num_buckets, sample = param_grid[i]
+        logger.info(f"✅ Running ARRAY mode for index {i}: {embedding_row.embedding_name}")
+
+        try:
+            result = process_embedding(embedding_row, num_buckets, sample, cfg)
+            if result is not None:
+                output_dir = cfg["OUTPUT_DIR"]
+                os.makedirs(output_dir, exist_ok=True)
+                single_df = pd.DataFrame([result])
+                outfile = os.path.join(output_dir, f"metrics_summary_part_{i}.csv")
+                single_df.to_csv(outfile, index=False)
+                logger.info(f"✅ Metrics for index {i} saved to '{outfile}'")
+        except Exception as e:
+            logger.error(f"❌ Failed to process index {i}: {e}")
+            logger.error(traceback.format_exc())
+            sys.exit(1)
+
+    logger.info("✅ Script complete")
+
+    # main()
