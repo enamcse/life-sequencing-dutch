@@ -5,8 +5,9 @@
   "OUTPUT_DIR": "/gpfs/ostor/ossc9424/data/eh2/fib_spiral_pop_vs_LISS",
   "SPHERE_POINTS_DIR": "/gpfs/ostor/ossc9424/data/eh2/sphere_points",
   "NUM_BUCKETS_LIST": [10, 100, 200],
-  "OUTPUT_POP_BUCKET_ID": 1,
-  "OUTPUT_LISS_BUCKET_ID": 1,
-  "OUTPUT_BUCKET_SUMMARY": 1,
-  "OUTPUT_RINPERSOON_YEAR_BUCKET": 1
+  "OUTPUT_POP_BUCKET_ID": true,
+  "OUTPUT_LISS_BUCKET_ID": true,
+  "OUTPUT_BUCKET_SUMMARY": true,
+  "OUTPUT_RINPERSOON_YEAR_BUCKET": true,
+  "DO_WHITENING": true
 }

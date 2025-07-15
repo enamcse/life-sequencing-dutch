@@ -25,6 +25,7 @@ import itertools
 import json
 from scipy.stats import pearsonr, ks_2samp, chisquare, wasserstein_distance, entropy
 from scipy.spatial.distance import jensenshannon, cosine
+import torch
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
@@ -36,6 +37,7 @@ OUTPUT_BUCKET_SUMMARY = 'OUTPUT_BUCKET_SUMMARY'
 OUTPUT_RINPERSOON_YEAR_BUCKET = 'OUTPUT_RINPERSOON_YEAR_BUCKET'
 SPHERE_POINTS_DIR = 'SPHERE_POINTS_DIR'
 NUM_BUCKETS_LIST = 'NUM_BUCKETS_LIST'
+DO_WHITENING = 'DO_WHITENING'
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,14 +51,61 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ----------------------------
+# 0. Whitening function
+# ----------------------------
+def whitening_torch_final(embeddings):
+    mu = torch.mean(embeddings, dim=0, keepdim=True)
+    cov = torch.mm((embeddings - mu).t(), embeddings - mu)
+    u, s, vt = torch.svd(cov)
+    W = torch.mm(u, torch.diag(1/torch.sqrt(s)))
+    embeddings = torch.mm(embeddings - mu, W)
+    return embeddings
+
+# ----------------------------
 # 1. Data loading
 # ----------------------------
-def load_data(embedding_file, background_file):
+def load_data(embedding_file, background_file, cfg):
     logger.info("✅ Loading embedding data...")
     df_emb = pd.read_parquet(embedding_file)
     dim = len(df_emb.columns) - 1  # Exclude rinpersoon_id
     logger.info(f" - Dimension: {dim}")
     logger.info(f" - Rows: {len(df_emb)}, Columns: {list(df_emb.columns)}")
+    if cfg.get("DO_WHITENING", 0):
+        logger.info("✅ Whitening embeddings as per config")
+
+        # Identify embedding columns
+        embedding_cols = [col for col in df_emb.columns if col.lower().startswith("emb")]
+        meta_cols = [col for col in df_emb.columns if not col.lower().startswith("emb")]
+
+        logger.info(f" - Meta columns: {meta_cols}")
+        logger.info(f" - Embedding columns: {embedding_cols}")
+
+        emb_tensor = torch.tensor(df_emb[embedding_cols].values, dtype=torch.float32)
+
+        # Whitening
+        mu = torch.mean(emb_tensor, dim=0, keepdim=True)
+        cov = torch.mm((emb_tensor - mu).t(), emb_tensor - mu)
+        u, s, vt = torch.svd(cov)
+        W = torch.mm(u, torch.diag(1/torch.sqrt(s)))
+        whitened = torch.mm(emb_tensor - mu, W)
+
+        # Replace embeddings with whitened values
+        df_emb_whitened = pd.DataFrame(
+            whitened.numpy(),
+            columns=embedding_cols
+        )
+
+        # Preserve meta columns exactly as is
+        for col in meta_cols:
+            df_emb_whitened[col] = df_emb[col].values
+
+        # Ensure column order: meta first, then embeddings
+        df_emb = df_emb_whitened[meta_cols + embedding_cols]
+
+        logger.info("✅ Whitening complete")
+    else:
+        logger.info("⚠️  Whitening skipped (DO_WHITENING=0)")
+
 
     logger.info("✅ Loading background data...")
     df_bg = pd.read_csv(background_file) if background_file.split('.')[-1] == 'csv'  else pd.read_parquet(background_file)
@@ -173,6 +222,7 @@ def load_or_compute_sphere(dim, num_buckets, sphere_dir):
     np.save(filename, pts)
     logger.info(f"✅ Saved sphere points to {filename}")
     return pts
+
 
 # ----------------------------
 # 3. Cone / Bucket assignment
@@ -339,7 +389,6 @@ def buckets_to_cover_fraction(probs, target=0.9):
     return len(probs)
 
 
-
 # ----------------------------
 # 6. Compare metadata distribution: Currently not in use
 # ----------------------------
@@ -416,7 +465,7 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         logger.info(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
 
         # Load embeddings and background data for whole population
-        dim, pop_embeddings = load_data(file_path, background_file)
+        dim, pop_embeddings = load_data(file_path, background_file, cfg)
         logger.info(f'Population Embeddings:\n{pop_embeddings.head()}')
         emb_cols = [c for c in pop_embeddings.columns if c.startswith("emb")]
 
