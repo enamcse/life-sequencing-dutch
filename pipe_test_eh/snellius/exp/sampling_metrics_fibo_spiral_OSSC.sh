@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --time=02:30:00
 #SBATCH --mem=300G
-# #SBATCH -p rome 
+#SBATCH -p comp_env 
 #SBATCH -e /gpfs/ostor/ossc9424/data/eh/logs/%j.%x.err
 #SBATCH -o /gpfs/ostor/ossc9424/data/eh/logs/%j.%x.out
 
