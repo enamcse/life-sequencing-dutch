@@ -27,6 +27,7 @@ from scipy.stats import pearsonr, ks_2samp, chisquare, wasserstein_distance, ent
 from scipy.spatial.distance import jensenshannon, cosine
 import torch
 from dataclasses import dataclass
+from tqdm import tqdm
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
@@ -605,7 +606,7 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
 
         # --------------- COUNTS & PROBABILITIES -----------------
         pop_counts = [0] * num_buckets
-        for bid in pop_buckets:
+        for bid in tqdm(pop_buckets,desc='Counting Population in each bucket'):
             pop_counts[bid] += 1
         if not cfg.get(LISS_FILE, 0) is None:
             liss_counts = [0] * num_buckets
@@ -758,7 +759,7 @@ if __name__ == "__main__":
     if args.index is None:
         logger.info("✅ No --index given: running ALL jobs in SERIAL mode")
         results = []
-        for i, (embedding_row, num_buckets, sample) in enumerate(param_grid):
+        for i, (embedding_row, num_buckets, sample) in enumerate(tqdm(param_grid, desc='Processing the embedding file',unit='file')):
             try:
                 logger.info(f"▶️ [Serial] Processing job {i+1}/{total_jobs}: {embedding_row.embedding_name}")
                 res = process_embedding(embedding_row, num_buckets, sample, cfg)
