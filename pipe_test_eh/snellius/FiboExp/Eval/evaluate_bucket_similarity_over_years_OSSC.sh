@@ -22,9 +22,9 @@ cd /gpfs/ostor/ossc9424/data/eh2/fibo_tanzir
 # Call Python script with all arguments
 python evaluate_bucket_similarity_over_years_OSSC.py \
   --parquet_file "/gpfs/ostor/ossc9424/data/eh2/population_rinpersoon_year_bucketID_regular.parquet" \
-  --year1_list "2009 2010" \
-  --end_year "2020" \
-  --sample_size "1000000" \
+  --year1_list 2009 2010 \
+  --end_year 2020 \
+  --sample_size 1000000 \
   --output_file "/gpfs/ostor/ossc9424/data/eh2/fibo_tanzir/eval_results_regular.csv"
 
 echo "✅ Job finished at $(date)"
