@@ -16,9 +16,9 @@ cd /gpfs/ostor/ossc9424/users/tanzir/life-sequencing-dutch
 source /gpfs/ostor/ossc9424/users/tanzir/life-sequencing-dutch/requirements/load_venv.sh
 
 # Change to data directory
-cd /gpfs/ostor/ossc9424/data/eh2
+cd /gpfs/ostor/ossc9424/data/eh2/fibo_tanzir
 
 # Run the merge script
-python merge_parquet_by_prefix.py --input_dir "pipe_test_eh/snellius/FiboExp/fibo_spiral_tanzir_inp_OSSC_white_cfg.json" --prefix "population_" --output_file "/gpfs/ostor/ossc9424/data/eh2/fib_spiral_tanzir_regular/population_rinpersoon_year_bucketID_white.parquet"
+time python fibo_spiral_tanzir_inp_OSSC_merge_parquets.py --input_dir "/gpfs/ostor/ossc9424/data/eh2/fib_spiral_tanzir_white" --prefix "population_" --output_file "/gpfs/ostor/ossc9424/data/eh2/fib_spiral_tanzir_white/population_rinpersoon_year_bucketID_white.parquet"
 
 echo "✅ Job finished at $(date)"
