@@ -63,12 +63,37 @@ def main():
     rng = np.random.default_rng(seed=42)
     random_pairs = []
 
-    with tqdm(total=args.sample_size, desc="Sampling random pairs") as pbar:
-        while len(random_pairs) < args.sample_size:
-            a, b = rng.choice(full_people_list, 2, replace=False)
-            random_pairs.append((a, b))
-            pbar.update(1)
+    # Fast vectorized sampling of distinct pairs
+    logging.info(f"✅ Sampling {args.sample_size:,} random person pairs ONCE (vectorized)...")
 
+    N = len(full_people_list)
+    if N < 2:
+        logging.error("❌ Not enough people to sample distinct pairs!")
+        return
+
+    # Oversample a bit to account for filtering same-index
+    oversample_factor = 1.2
+    num_attempts = int(args.sample_size * oversample_factor)
+
+    while True:
+        a_indices = rng.integers(0, N, size=num_attempts)
+        b_indices = rng.integers(0, N, size=num_attempts)
+        mask = a_indices != b_indices
+        valid_a = a_indices[mask]
+        valid_b = b_indices[mask]
+        if len(valid_a) >= args.sample_size:
+            break
+        oversample_factor *= 1.5
+        num_attempts = int(args.sample_size * oversample_factor)
+        logging.info(f"✅ Resampling with increased size: {num_attempts}")
+
+    # Take exactly sample_size
+    random_pairs = list(zip(
+        [full_people_list[i] for i in valid_a[:args.sample_size]],
+        [full_people_list[i] for i in valid_b[:args.sample_size]]
+    ))
+
+    logging.info(f"✅ Finished sampling {len(random_pairs):,} random pairs.")
     logging.info("✅ Random pairs sampling complete. Will reuse this set for all year pairs.")
 
     # Determine all year-pairs to evaluate
