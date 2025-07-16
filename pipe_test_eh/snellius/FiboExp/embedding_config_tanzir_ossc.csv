@@ -1,0 +1,13 @@
+embedding_name,year,file_path
+net_2009,2009,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols//gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/net_2009.parquet
+net_2010,2010,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2010-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2011,2011,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2011-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2012,2012,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2012-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2013,2013,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2013-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2014,2014,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2014-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2015,2015,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2015-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2016,2016,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2016-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2017,2017,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2017-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2018,2018,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2018-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2019,2019,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2019-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2020,2020,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2020-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet

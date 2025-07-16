@@ -1,0 +1,3 @@
+embedding_name,year,file_path
+net_2010,2010,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2010-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
+net_2020,2020,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2020-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet

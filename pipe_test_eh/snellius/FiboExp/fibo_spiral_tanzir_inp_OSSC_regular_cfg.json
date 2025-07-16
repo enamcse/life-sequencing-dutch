@@ -1,0 +1,14 @@
+{
+  "EMBEDDING_FILE": "/gpfs/ostor/ossc9424/data/eh2/fibo_tanzir/embedding_config_tanzir_ossc.csv",
+  "BACKGROUND_FILE": null,
+  "LISS_FILE": null,
+  "OUTPUT_DIR": "/gpfs/ostor/ossc9424/data/eh2/fib_spiral_tanzir_regular",
+  "SPHERE_POINTS_DIR": "/gpfs/ostor/ossc9424/data/eh2/sphere_points",
+  "NUM_BUCKETS_LIST": [100],
+  "OUTPUT_POP_BUCKET_ID": true,
+  "OUTPUT_LISS_BUCKET_ID": false,
+  "OUTPUT_BUCKET_SUMMARY": true,
+  "OUTPUT_RINPERSOON_YEAR_BUCKET": true,
+  "DO_WHITENING": false,
+  "DO_WHITENING_CORR": false
+}
