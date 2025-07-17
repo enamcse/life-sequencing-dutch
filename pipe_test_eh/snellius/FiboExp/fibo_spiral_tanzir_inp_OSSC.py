@@ -10,6 +10,7 @@ import os
 import sys
 import traceback
 import logging
+from types import SimpleNamespace
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
@@ -41,6 +42,7 @@ SPHERE_POINTS_DIR = 'SPHERE_POINTS_DIR'
 NUM_BUCKETS_LIST = 'NUM_BUCKETS_LIST'
 DO_WHITENING = 'DO_WHITENING'
 DO_WHITENING_CORR = 'DO_WHITENING_CORR'
+MERGE_ALL_EMBEDDING_FILES = 'MERGE_ALL_EMBEDDING_FILES'
 
 logging.basicConfig(
     level=logging.INFO,
@@ -109,9 +111,24 @@ class Evaluator:
 # ----------------------------
 # 1. Data loading
 # ----------------------------
+def load_and_merge_embeddings(csv_path):
+    df_paths = pd.read_csv(csv_path)
+    all_dfs = []
+    for i, row in df_paths.iterrows():
+        path = row['path'] if 'path' in row else row[0]
+        logging.info(f"📂 Loading embedding file: {path}")
+        df = pd.read_parquet(path)
+        all_dfs.append(df)
+    merged_df = pd.concat(all_dfs, axis=0, ignore_index=True)
+    logging.info(f"✅ Merged {len(all_dfs)} embedding files with shape: {merged_df.shape}")
+    return merged_df
+
 def load_data(embedding_file, background_file, cfg, emb_type=None):
     logger.info("✅ Loading embedding data...")
-    df_emb = pd.read_parquet(embedding_file)
+    if cfg.get(MERGE_ALL_EMBEDDING_FILES, 0):
+        df_emb = load_and_merge_embeddings(embedding_file)
+    else:
+        df_emb = pd.read_parquet(embedding_file)
 
     # Identify embedding columns
     embedding_cols = [col for col in df_emb.columns if col.lower().startswith("emb")]
@@ -746,29 +763,49 @@ if __name__ == "__main__":
         logger.error(f"❌ Failed to load config file: {e}")
         sys.exit(1)
 
+    if cfg.get(MERGE_ALL_EMBEDDING_FILES, 0):
+        pass
+    else:  
     # Build param grid
-    try:
-        param_grid = build_param_grid(cfg)
-        total_jobs = len(param_grid)
-        logger.info(f"✅ Parameter grid has {total_jobs} jobs.")
-    except Exception as e:
-        logger.error(f"❌ Failed to build parameter grid: {e}")
-        sys.exit(1)
+        try:
+            param_grid = build_param_grid(cfg)
+            total_jobs = len(param_grid)
+            logger.info(f"✅ Parameter grid has {total_jobs} jobs.")
+        except Exception as e:
+            logger.error(f"❌ Failed to build parameter grid: {e}")
+            sys.exit(1)
 
     # Decide on array or serial mode
     if args.index is None:
-        logger.info("✅ No --index given: running ALL jobs in SERIAL mode")
         results = []
-        for i, (embedding_row, num_buckets, sample) in enumerate(tqdm(param_grid, desc='Processing the embedding file',unit='file')):
+        logger.info("✅ No --index given: running ALL jobs in SERIAL mode with merged embedding files")
+        if cfg.get(MERGE_ALL_EMBEDDING_FILES, 0):
             try:
-                logger.info(f"▶️ [Serial] Processing job {i+1}/{total_jobs}: {embedding_row.embedding_name}")
-                res = process_embedding(embedding_row, num_buckets, sample, cfg)
-                if res is not None:
-                    results.append(res)
+                # Create embedding row
+                embedding_row = SimpleNamespace()
+                embedding_row.embedding_name = 'merged_embeddings'
+                embedding_row.year = 'all'
+                embedding_row.file_path = cfg[EMBEDDING_FILE]
+
+                num_buckets = cfg[NUM_BUCKETS_LIST][0]  # Use first bucket size
+                sample = 'liss-people'  # Default sample set
+
+                results = process_embedding(embedding_row, num_buckets, sample, cfg)
             except Exception as e:
-                logger.error(f"❌ Error processing job {i}: {e}")
-                logger.error(traceback.format_exc())
-                continue
+                logger.error(f"❌ Error processing merged embedding file: {e}")
+                sys.exit(1)
+        else:
+            logger.info("✅ No --index given: running ALL jobs in SERIAL mode")
+            for i, (embedding_row, num_buckets, sample) in enumerate(tqdm(param_grid, desc='Processing the embedding file',unit='file')):
+                try:
+                    logger.info(f"▶️ [Serial] Processing job {i+1}/{total_jobs}: {embedding_row.embedding_name}")
+                    res = process_embedding(embedding_row, num_buckets, sample, cfg)
+                    if res is not None:
+                        results.append(res)
+                except Exception as e:
+                    logger.error(f"❌ Error processing job {i}: {e}")
+                    logger.error(traceback.format_exc())
+                    continue
 
         # Save all results
         if results:
@@ -780,7 +817,6 @@ if __name__ == "__main__":
                 logger.info("✅ All metrics saved to 'metrics_summary.csv'")
             except Exception as e:
                 logger.error(f"❌ Failed to save metrics_summary.csv: {e}")
-
     else:
         # Array mode: run only one index
         i = args.index
