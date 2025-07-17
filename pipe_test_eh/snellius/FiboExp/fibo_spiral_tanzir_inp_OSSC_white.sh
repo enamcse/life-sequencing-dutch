@@ -8,7 +8,7 @@
 #SBATCH --mem=128G
 #SBATCH -p comp_env
 #SBATCH --nodelist=ossc9424vm1
-#SBATCH --array=0-5
+# #SBATCH --array=0-5
 #SBATCH -e /gpfs/ostor/ossc9424/data/eh2/logs/%j.%x.err
 #SBATCH -o /gpfs/ostor/ossc9424/data/eh2/logs/%j.%x.out
 

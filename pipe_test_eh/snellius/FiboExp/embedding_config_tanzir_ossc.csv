@@ -1,5 +1,5 @@
 embedding_name,year,file_path
-net_2009,2009,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols//gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/net_2009.parquet
+net_2009,2009,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/net_2009.parquet
 net_2010,2010,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2010-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
 net_2011,2011,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2011-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet
 net_2012,2012,/gpfs/ostor/ossc9424/data/graph/aligned_embeddings/final-ols/gpfs-ostor-ossc9424-data-graph-embeddings-year=2012-iter_name=walklen40_prob0.8-record_edge_type=1-embedding.parquet_ols.parquet

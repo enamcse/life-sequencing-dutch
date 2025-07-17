@@ -115,7 +115,7 @@ def load_and_merge_embeddings(csv_path):
     df_paths = pd.read_csv(csv_path)
     all_dfs = []
     for i, row in df_paths.iterrows():
-        path = row['path'] if 'path' in row else row[0]
+        path = row['path'] if 'path' in row else row[2]
         logging.info(f"📂 Loading embedding file: {path}")
         df = pd.read_parquet(path)
         all_dfs.append(df)
