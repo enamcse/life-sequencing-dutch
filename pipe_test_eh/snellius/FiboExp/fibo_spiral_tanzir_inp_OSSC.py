@@ -29,6 +29,7 @@ from scipy.spatial.distance import jensenshannon, cosine
 import torch
 from dataclasses import dataclass
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
@@ -149,12 +150,7 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
             emb_before_whitening = df_emb[embedding_cols].copy()
         emb_tensor = torch.tensor(df_emb[embedding_cols].values, dtype=torch.float32)
 
-        # Whitening
-        mu = torch.mean(emb_tensor, dim=0, keepdim=True)
-        cov = torch.mm((emb_tensor - mu).t(), emb_tensor - mu)
-        u, s, vt = torch.svd(cov)
-        W = torch.mm(u, torch.diag(1/torch.sqrt(s)))
-        whitened = torch.mm(emb_tensor - mu, W)
+        whitened = whitening_torch_final(emb_tensor)
 
         # Replace embeddings with whitened values
         df_emb_whitened = pd.DataFrame(
@@ -346,7 +342,34 @@ def assign_buckets(embeddings: np.ndarray,
     dot_prods = np.dot(embeddings, sphere_points.T)
     bucket_ids = np.argmax(dot_prods, axis=1)
     return bucket_ids.tolist()
+
+# chunked version for large datasets
+def assign_buckets_chunked(embeddings, sphere_points, chunk_size=5_000_000):
+    results = []
+    for i in tqdm(range(0, len(embeddings), chunk_size), desc="Assigning Buckets"):
+        chunk = embeddings[i:i+chunk_size]
+        dot_prods = np.dot(chunk, sphere_points.T)
+        bucket_ids = np.argmax(dot_prods, axis=1)
+        results.extend(bucket_ids.tolist())
+    return results
+
+# Parallelized version for large datasets
+def process_chunk(chunk, sphere_points):
+    dot_prods = np.dot(chunk, sphere_points.T)
+    return np.argmax(dot_prods, axis=1)
+
+def assign_buckets_parallel(embeddings, sphere_points, chunk_size=5_000_000, n_jobs=4):
+    results = []
+    n = len(embeddings)
+    chunks = [embeddings[i:i+chunk_size] for i in range(0, n, chunk_size)]
     
+    with tqdm(total=len(chunks), desc="Assigning Buckets") as pbar:
+        results = Parallel(n_jobs=n_jobs, backend='loky')(
+            delayed(process_chunk)(chunk, sphere_points) for chunk in chunks
+        )
+        pbar.update(len(chunks))
+
+    return np.concatenate(results).tolist()
 
 # ----------------------------
 # 4. Sampling evenly from cones
@@ -594,7 +617,7 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
 
         # --------------- STRATIFICATION -----------------
-        pop_buckets = assign_buckets(pop_embeddings[emb_cols], sphere_pts)
+        pop_buckets = assign_buckets_parallel(pop_embeddings[emb_cols], sphere_pts)
         if not cfg.get(LISS_FILE, 0) is None:
             liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
 
