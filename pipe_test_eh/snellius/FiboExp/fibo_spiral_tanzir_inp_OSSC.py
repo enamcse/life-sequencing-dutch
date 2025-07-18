@@ -30,6 +30,8 @@ import torch
 from dataclasses import dataclass
 from tqdm import tqdm
 from joblib import Parallel, delayed
+import psutil
+import gc
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
@@ -55,6 +57,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+def log_memory(tag=""):
+    process = psutil.Process(os.getpid())
+    mem_gb = process.memory_info().rss / 1e9
+    logging.info(f" Memory used {tag}: {mem_gb:.2f} GB")
 
 # ----------------------------
 # 0. Whitening function
@@ -114,14 +121,23 @@ class Evaluator:
 # ----------------------------
 def load_and_merge_embeddings(csv_path):
     df_paths = pd.read_csv(csv_path)
-    all_dfs = []
+    merged_df = pd.DataFrame()
     for i, row in df_paths.iterrows():
+        
         path = row['path'] if 'path' in row else row[2]
+        year = row['year'] if 'year' in row else row[1]
         logging.info(f"📂 Loading embedding file: {path}")
+        
+        log_memory(f"Before loading file: {path}")
         df = pd.read_parquet(path)
-        all_dfs.append(df)
-    merged_df = pd.concat(all_dfs, axis=0, ignore_index=True)
-    logging.info(f"✅ Merged {len(all_dfs)} embedding files with shape: {merged_df.shape}")
+        df['year'] = year
+        merged_df = pd.concat([merged_df, df], ignore_index=True)
+        del df
+        gc.collect()
+        log_memory(f"After loading file: {path}")
+    
+    log_memory(f"After concatenating all files")
+    logging.info(f"✅ Merged {len(merged_df)} embedding files with shape: {merged_df.shape}")
     return merged_df
 
 def load_data(embedding_file, background_file, cfg, emb_type=None):
@@ -205,9 +221,13 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
     else:
         logger.info("⚠️  Whitening skipped (DO_WHITENING=0)")
 
+    log_memory('Before renaming rinpersoon')
+
     if df_emb.columns.isin(["rinpersoon_id"]).any():
-        df_emb = df_emb.rename(columns={"rinpersoon_id": "RINPERSOON"})
+        df_emb.rename(columns={"rinpersoon_id": "RINPERSOON"}, inplace=True)
     logger.info(f"Embedding data # {len(df_emb)} rows, Unique IDs: {df_emb['RINPERSOON'].nunique()}")
+
+    log_memory('After renaming rinpersoon')
 
     if not cfg.get(BACKGROUND_FILE, 0) is None:
         logger.info("✅ Loading background data...")
@@ -356,18 +376,29 @@ def assign_buckets_chunked(embeddings, sphere_points, chunk_size=5_000_000):
 # Parallelized version for large datasets
 def process_chunk(chunk, sphere_points):
     dot_prods = np.dot(chunk, sphere_points.T)
-    return np.argmax(dot_prods, axis=1)
+    bucket_ids = np.argmax(dot_prods, axis=1)
+    del dot_prods
+    gc.collect()
+    return bucket_ids
 
 def assign_buckets_parallel(embeddings, sphere_points, chunk_size=5_000_000, n_jobs=4):
     results = []
     n = len(embeddings)
-    chunks = [embeddings[i:i+chunk_size] for i in range(0, n, chunk_size)]
-    
-    with tqdm(total=len(chunks), desc="Assigning Buckets") as pbar:
-        results = Parallel(n_jobs=n_jobs, backend='loky')(
-            delayed(process_chunk)(chunk, sphere_points) for chunk in chunks
-        )
-        pbar.update(len(chunks))
+    log_memory(f"Assign buckets before everything")
+    def generate_chunks():
+        for i in range(0, n, chunk_size):
+            yield embeddings[i:i+chunk_size]
+
+    with tqdm(total=n, desc="Assigning Buckets") as pbar:
+        for results in Parallel(n_jobs=n_jobs, backend='loky', prefer='processes')(
+            delayed(process_chunk)(chunk, sphere_points) for chunk in generate_chunks()
+        ):
+            results.append(result)
+            pbar.update(len(result))
+            gc.collect()
+            log_memory(f"While iterating the chunks")
+
+    log_memory(f"Before returning from assign buckets")
 
     return np.concatenate(results).tolist()
 
@@ -592,11 +623,13 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         sphere_dir = cfg.get(SPHERE_POINTS_DIR, output_dir)
 
         logger.info(f"Running: {emb_type}, {year}, {num_buckets}, {sample}")
-
+        
+        log_memory("Before loading data")
         # Load embeddings and background data for whole population
         dim, pop_embeddings = load_data(file_path, background_file, cfg, emb_type)
         logger.info(f'Population Embeddings:\n{pop_embeddings.head()}')
         emb_cols = [c for c in pop_embeddings.columns if c.startswith("emb")]
+        log_memory("After loading data")
 
         if len(emb_cols) != dim:
             logger.warning((f"Expected {dim} embedding columns, found {len(emb_cols)}"))
@@ -610,14 +643,16 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
             liss_ids_set = set(liss_ids)
 
             liss_embeddings = pop_embeddings[pop_embeddings['RINPERSOON'].isin(liss_ids_set)]
-
+        log_memory("Before Sphere Load")
         # Generate or load sphere points
         sphere_pts = load_or_compute_sphere(dim, num_buckets, sphere_dir)
         sphere_pts = np.array(sphere_pts)
         logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
 
         # --------------- STRATIFICATION -----------------
-        pop_buckets = assign_buckets_parallel(pop_embeddings[emb_cols], sphere_pts)
+        log_memory(f"Assign buckets before call")
+        pop_buckets = assign_buckets_parallel(pop_embeddings[emb_cols], sphere_pts, chunk_size=10_1000)
+        log_memory(f"Assign buckets after call")
         if not cfg.get(LISS_FILE, 0) is None:
             liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
 
