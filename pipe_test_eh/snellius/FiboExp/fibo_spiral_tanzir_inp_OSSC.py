@@ -32,6 +32,7 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 import psutil
 import gc
+import csv
 
 EMBEDDING_FILE = 'EMBEDDING_FILE'
 BACKGROUND_FILE = 'BACKGROUND_FILE'
@@ -406,6 +407,49 @@ def assign_buckets_parallel(embeddings, sphere_points, output_file, chunk_size=5
 
     return np.concatenate(results).tolist()
 
+def stratify_population(pop_embeddings, emb_cols, sphere_pts, cfg):
+    pop_buckets = []
+
+    if cfg.get(MERGE_ALL_EMBEDDING_FILES, 0):
+        logger.info("🔀 MERGE_ALL_EMBEDDING_FILES: streaming bucket assignment in chunks")
+        n = len(pop_embeddings)
+        chunk_size = 100_000
+
+        # iterate by row‑index chunks
+        for start in tqdm(range(0, n, chunk_size), desc="Bucketing pop embeddings"):
+            end = min(start + chunk_size, n)
+            chunk_df = pop_embeddings.iloc[start:end]
+            emb_chunk = chunk_df[emb_cols].to_numpy(dtype=np.float32)
+
+            # compute bucket IDs
+            dot_prods = emb_chunk.dot(sphere_pts.T)          # (chunk_size × num_buckets)
+            bucket_ids = np.argmax(dot_prods, axis=1)        # length = chunk_size
+
+            # accumulate
+            pop_buckets.extend(bucket_ids.tolist())
+
+            # clean up
+            del emb_chunk, dot_prods, bucket_ids, chunk_df
+            gc.collect()
+
+        log_memory("After streaming bucketing")
+
+    else:
+        logger.info("🔀 Single-call bucket assignment")
+        embedding_array = pop_embeddings[emb_cols].to_numpy(copy=False, dtype=np.float32)
+        log_memory("Before assign_buckets_parallel")
+        pop_buckets = assign_buckets_parallel(embedding_array, sphere_pts,
+                                              chunk_size=1_000_000, n_jobs=cfg.get("N_JOBS", 4))
+        log_memory("After assign_buckets_parallel")
+
+    # now pop_buckets is a flat list of length len(pop_embeddings)
+    # and exactly what your SAVE section expects:
+    #   'RINPERSOON': pop_embeddings['RINPERSOON'], 'YEAR': year, 'BucketID': pop_buckets
+
+    # return it for later saving
+    return pop_buckets
+
+
 # ----------------------------
 # 4. Sampling evenly from cones
 # ----------------------------
@@ -654,26 +698,25 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
 
         # --------------- STRATIFICATION -----------------
-        
-        embedding_array = pop_embeddings[emb_cols].to_numpy(copy=False)
-        output_filename = f"bucket_ids_{emb_type}_buckets{num_buckets}.csv"
-        log_memory(f"Assign buckets before call")
-        pop_buckets = assign_buckets_parallel(embedding_array, sphere_pts, output_filename, chunk_size=1_000_000)
-        log_memory(f"Assign buckets after call")
-        if not cfg.get(LISS_FILE, 0) is None:
-            liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
+        pop_buckets = stratify_population(
+            pop_embeddings,
+            emb_cols,
+            sphere_pts,
+            cfg
+        )
 
         # ---------- SAVE BUCKET IF NEEDED --------------
-        embedding_file_base = emb_type
-
         if cfg.get(OUTPUT_POP_BUCKET_ID, 0):
             pop_buckets_output = pd.DataFrame({
                 'RINPERSOON': pop_embeddings['RINPERSOON'],
-                'YEAR':year,
+                'YEAR': year,
                 'BucketID': pop_buckets
             })
-            pop_buckets_output_filename = f"pop_bucket_ids_{embedding_file_base}_buckets{num_buckets}.parquet"
-            pop_buckets_output.to_parquet(os.path.join(output_dir, pop_buckets_output_filename), index=False)
+            pop_buckets_output_filename = f"pop_bucket_ids_{emb_type}_buckets{num_buckets}.parquet"
+            pop_buckets_output.to_parquet(
+                os.path.join(output_dir, pop_buckets_output_filename),
+                index=False
+            )
             logger.info(f"✅ Population bucket IDs saved to '{pop_buckets_output_filename}'")
 
         if cfg.get(OUTPUT_LISS_BUCKET_ID, 0) and not cfg.get(LISS_FILE, 0) is None:
