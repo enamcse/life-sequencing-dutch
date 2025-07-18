@@ -381,24 +381,28 @@ def process_chunk(chunk, sphere_points):
     gc.collect()
     return bucket_ids
 
-def assign_buckets_parallel(embeddings, sphere_points, chunk_size=5_000_000, n_jobs=4):
-    results = []
+def assign_buckets_parallel(embeddings, sphere_points, output_file, chunk_size=5_000_000, n_jobs=4):
     n = len(embeddings)
-    log_memory(f"Assign buckets before everything")
+    log_memory(f"Assign Buckets - Start")
+
     def generate_chunks():
         for i in range(0, n, chunk_size):
             yield embeddings[i:i+chunk_size]
 
-    with tqdm(total=n, desc="Assigning Buckets") as pbar:
-        for results in Parallel(n_jobs=n_jobs, backend='loky', prefer='processes')(
-            delayed(process_chunk)(chunk, sphere_points) for chunk in generate_chunks()
-        ):
-            results.append(result)
-            pbar.update(len(result))
-            gc.collect()
-            log_memory(f"While iterating the chunks")
+    with open(output_file, 'w') as f:
+        f.write('bucket_id\n')
 
-    log_memory(f"Before returning from assign buckets")
+        with tqdm(total=n, desc="Assigning Buckets") as pbar:
+            for bucket_list in Parallel(n_jobs=n_jobs, backend='loky', prefer='processes')(
+                delayed(process_chunk)(chunk, sphere_points) for chunk in generate_chunks()
+            ):
+                for bucket_id in bucket_list:
+                    f.write(f"{bucket_id}\n")
+                pbar.update(len(bucket_list))
+                gc.collect()
+                log_memory(f"After chunk processed")
+
+    log_memory(f"Assign Buckets - Done")
 
     return np.concatenate(results).tolist()
 
@@ -650,8 +654,11 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         logger.info(f"✅ Sphere points generated: {sphere_pts.shape}")
 
         # --------------- STRATIFICATION -----------------
+        
+        embedding_array = pop_embeddings[emb_cols].to_numpy(copy=False)
+        output_filename = f"bucket_ids_{emb_type}_buckets{num_buckets}.csv"
         log_memory(f"Assign buckets before call")
-        pop_buckets = assign_buckets_parallel(pop_embeddings[emb_cols], sphere_pts, chunk_size=10_1000)
+        pop_buckets = assign_buckets_parallel(embedding_array, sphere_pts, output_filename, chunk_size=1_000_000)
         log_memory(f"Assign buckets after call")
         if not cfg.get(LISS_FILE, 0) is None:
             liss_buckets = assign_buckets(liss_embeddings[emb_cols], sphere_pts)
