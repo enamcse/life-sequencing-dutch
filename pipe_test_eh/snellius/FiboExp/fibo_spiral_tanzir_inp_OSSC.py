@@ -236,11 +236,12 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
     logger.info(f" - Rows: {len(df_emb)}, Columns: {list(df_emb.columns)}")
 
     if cfg.get(DO_WHITENING, 0):
-        logger.info("✅ Whitening embeddings as per config")
+        log_memory("✅ Whitening embeddings as per config")
 
         # 1) Grab one single NumPy view of all embeddings (no copy)
         emb_np = df_emb[embedding_cols].to_numpy(dtype=np.float32, copy=False)
-
+        log_memory("✅ Grabbed embeddings as NumPy array")
+        
         # Preserve for correlation, if requested
         if cfg.get(DO_WHITENING_CORR, 0):
             emb_before_np = emb_np
