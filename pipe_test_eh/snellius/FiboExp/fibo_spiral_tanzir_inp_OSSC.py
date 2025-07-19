@@ -128,27 +128,59 @@ def streamed_whitening(df_emb, emb_cols, chunk_size=100_000):
 
     return all_whitened  # shape (n, dim)
 
-def streamed_whitening_np(emb_np: np.ndarray, chunk_size: int = 100_000) -> np.ndarray:
-    n, d = emb_np.shape
-    # 1) global mean
-    mu = emb_np.mean(axis=0)
-    # 2) covariance
+def streamed_whitening_df(df_emb, embedding_cols, chunk_size=100_000):
+    """
+    Chunked whitening directly from a Pandas DataFrame.
+    1) streaming mean
+    2) streaming covariance
+    3) SVD → whitening matrix W
+    4) streaming apply W to each chunk
+    """
+    n = len(df_emb)
+    d = len(embedding_cols)
+
+    # 1️⃣ Streaming mean
+    log_memory("start mean pass")
+    total = np.zeros(d, dtype=np.float64)
+    count = 0
+    for start in range(0, n, chunk_size):
+        chunk = df_emb.iloc[start:start+chunk_size][embedding_cols] \
+                    .to_numpy(dtype=np.float64)
+        total += chunk.sum(axis=0)
+        count += chunk.shape[0]
+        del chunk; gc.collect()
+    mu = total / count
+    log_memory("after mean pass")
+
+    # 2️⃣ Streaming covariance
     cov = np.zeros((d, d), dtype=np.float64)
-    for i in range(0, n, chunk_size):
-        chunk = emb_np[i:i+chunk_size].astype(np.float64)
+    for start in range(0, n, chunk_size):
+        chunk = df_emb.iloc[start:start+chunk_size][embedding_cols] \
+                    .to_numpy(dtype=np.float64)
         centered = chunk - mu
         cov += centered.T @ centered
-    cov /= (n - 1)
-    # 3) SVD → W
-    u, s, _ = np.linalg.svd(cov, full_matrices=False)
+        del chunk, centered; gc.collect()
+    cov /= (count - 1)
+    log_memory("after covariance pass")
+
+    # 3️⃣ SVD → compute W
+    u, s, vt = np.linalg.svd(cov, full_matrices=False)
     W = u @ np.diag(1.0 / np.sqrt(s))
-    # 4) apply in chunks
-    out = np.empty_like(emb_np, dtype=np.float32)
-    for i in range(0, n, chunk_size):
-        chunk = emb_np[i:i+chunk_size]
-        centered = chunk - mu
-        out[i:i+chunk_size] = (centered @ W).astype(np.float32)
-    return out
+    log_memory("after SVD / whitening matrix")
+
+    # 4️⃣ Apply whitening in chunks
+    whitened = np.empty((n, d), dtype=np.float32)
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = df_emb.iloc[start:end][embedding_cols] \
+                    .to_numpy(dtype=np.float32)
+        centered = chunk - mu.astype(np.float32)
+        whitened[start:end] = centered @ W.astype(np.float32)
+        del chunk, centered; gc.collect()
+    log_memory("after applying whitening")
+
+    return whitened
+
 
 
 # ----------------------------
@@ -241,7 +273,7 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
         # 1) Grab one single NumPy view of all embeddings (no copy)
         emb_np = df_emb[embedding_cols].to_numpy(dtype=np.float32, copy=False)
         log_memory("✅ Grabbed embeddings as NumPy array")
-        
+
         # Preserve for correlation, if requested
         if cfg.get(DO_WHITENING_CORR, 0):
             emb_before_np = emb_np
