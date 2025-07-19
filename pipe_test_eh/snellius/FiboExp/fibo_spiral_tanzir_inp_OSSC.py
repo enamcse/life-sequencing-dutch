@@ -709,8 +709,8 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
         if cfg.get(OUTPUT_POP_BUCKET_ID, 0):
             pop_buckets_output = pd.DataFrame({
                 'RINPERSOON': pop_embeddings['RINPERSOON'],
-                'YEAR': year,
-                'BucketID': pop_buckets
+                'YEAR': pop_embeddings['year'],
+                'BUCKET_ID': pop_buckets
             })
             pop_buckets_output_filename = f"pop_bucket_ids_{emb_type}_buckets{num_buckets}.parquet"
             pop_buckets_output.to_parquet(
@@ -759,18 +759,18 @@ def process_embedding(embedding_row, num_buckets, sample, cfg):
                 bucket_df['DiffPct'] = bucket_df['PopPct'] - bucket_df['LISSPct']
                 bucket_df['AbsDiffPct'] = bucket_df['DiffPct'].abs()
 
-            summary_filename = f"bucket_summary_{embedding_file_base}_buckets{num_buckets}.csv"
+            summary_filename = f"bucket_summary_{emb_type}_buckets{num_buckets}.csv"
             bucket_df.to_csv(os.path.join(output_dir, summary_filename), index=False)
             logger.info(f"✅ Bucket summary saved to '{summary_filename}'")
 
         # --------------- RINPERSOON-YEAR-BUCKET -----------------
-        if cfg.get(OUTPUT_RINPERSOON_YEAR_BUCKET, 0):
+        if cfg.get(OUTPUT_RINPERSOON_YEAR_BUCKET, 0) and not cfg.get(MERGE_ALL_EMBEDDING_FILES, 0):
             pop_bucket_df = pd.DataFrame({
                 'RINPERSOON': pop_embeddings['RINPERSOON'],
                 'YEAR': embedding_row.year,
                 'BUCKET_ID': pop_buckets
             })
-            pop_filename = f"population_rinpersoon_year_bucket_{embedding_file_base}_buckets{num_buckets}.parquet"
+            pop_filename = f"population_rinpersoon_year_bucket_{emb_type}_buckets{num_buckets}.parquet"
             pop_bucket_df.to_parquet(os.path.join(output_dir, pop_filename), index=False)
             logger.info(f"✅ Population RINPERSOON-YEAR-BUCKET saved to '{pop_filename}'")
 
