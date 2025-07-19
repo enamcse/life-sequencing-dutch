@@ -75,6 +75,82 @@ def whitening_torch_final(embeddings):
     embeddings = torch.mm(embeddings - mu, W)
     return embeddings
 
+def streamed_whitening(df_emb, emb_cols, chunk_size=100_000):
+    """
+    1) Compute global mean μ in streaming fashion
+    2) Compute global covariance Σ = Σ_i (x_i-μ)(x_i-μ)^T
+    3) SVD on Σ → U, S
+    4) For each chunk, apply (x-μ)·U·diag(1/√S)
+    """
+    n = len(df_emb)
+    dim = len(emb_cols)
+
+    # 1) compute mean
+    log_memory("before mean pass")
+    total = np.zeros(dim, dtype=np.float64)
+    count = 0
+    for start in range(0, n, chunk_size):
+        chunk = df_emb.iloc[start:start+chunk_size][emb_cols].to_numpy(dtype=np.float64)
+        total += chunk.sum(axis=0)
+        count += chunk.shape[0]
+        del chunk; gc.collect()
+    mu = total / count
+    log_memory("after mean pass")
+
+    # 2) compute covariance
+    cov = np.zeros((dim, dim), dtype=np.float64)
+    for start in range(0, n, chunk_size):
+        chunk = df_emb.iloc[start:start+chunk_size][emb_cols].to_numpy(dtype=np.float64)
+        centered = chunk - mu
+        cov += centered.T @ centered
+        del chunk, centered; gc.collect()
+    cov /= (count - 1)
+    log_memory("after covariance pass")
+
+    # 3) SVD + whitening matrix W
+    cov_t = torch.from_numpy(cov.astype(np.float32))
+    u, s, _ = torch.svd(cov_t)
+    W = u @ torch.diag(1.0 / torch.sqrt(s))
+    log_memory("after SVD/whitening matrix")
+
+    # 4) apply transformation in chunks and rebuild df_emb
+    whitened_cols = []
+    for start in range(0, n, chunk_size):
+        chunk = df_emb.iloc[start:start+chunk_size][emb_cols].to_numpy(dtype=np.float32)
+        centered = torch.from_numpy(chunk) - torch.from_numpy(mu.astype(np.float32))
+        whitened = centered @ W
+        whitened_cols.append(whitened.numpy())
+        del chunk, centered, whitened; gc.collect()
+
+    # stitch back into one array
+    all_whitened = np.vstack(whitened_cols)
+    log_memory("after assembling whitened array")
+
+    return all_whitened  # shape (n, dim)
+
+def streamed_whitening_np(emb_np: np.ndarray, chunk_size: int = 100_000) -> np.ndarray:
+    n, d = emb_np.shape
+    # 1) global mean
+    mu = emb_np.mean(axis=0)
+    # 2) covariance
+    cov = np.zeros((d, d), dtype=np.float64)
+    for i in range(0, n, chunk_size):
+        chunk = emb_np[i:i+chunk_size].astype(np.float64)
+        centered = chunk - mu
+        cov += centered.T @ centered
+    cov /= (n - 1)
+    # 3) SVD → W
+    u, s, _ = np.linalg.svd(cov, full_matrices=False)
+    W = u @ np.diag(1.0 / np.sqrt(s))
+    # 4) apply in chunks
+    out = np.empty_like(emb_np, dtype=np.float32)
+    for i in range(0, n, chunk_size):
+        chunk = emb_np[i:i+chunk_size]
+        centered = chunk - mu
+        out[i:i+chunk_size] = (centered @ W).astype(np.float32)
+    return out
+
+
 # ----------------------------
 # 0. Evaluation Helper
 # ----------------------------
@@ -162,65 +238,56 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
     if cfg.get(DO_WHITENING, 0):
         logger.info("✅ Whitening embeddings as per config")
 
-        # preserving for correlation calculation later
+        # 1) Grab one single NumPy view of all embeddings (no copy)
+        emb_np = df_emb[embedding_cols].to_numpy(dtype=np.float32, copy=False)
+
+        # Preserve for correlation, if requested
         if cfg.get(DO_WHITENING_CORR, 0):
-            emb_before_whitening = df_emb[embedding_cols].copy()
-        emb_tensor = torch.tensor(df_emb[embedding_cols].values, dtype=torch.float32)
+            emb_before_np = emb_np
 
-        whitened = whitening_torch_final(emb_tensor)
+        # 2) Streamed whitening in chunks
+        log_memory("START whitening")
+        whitened_np = streamed_whitening_np(emb_np, chunk_size=100_000)
+        log_memory("DONE whitening")
 
-        # Replace embeddings with whitened values
-        df_emb_whitened = pd.DataFrame(
-            whitened.numpy(),
-            columns=embedding_cols
-        )
-
-        # Preserve meta columns exactly as is
+        # 3) Rebuild df_emb from whitened_np + meta columns
+        df_emb_whitened = pd.DataFrame(whitened_np, columns=embedding_cols)
         for col in meta_cols:
             df_emb_whitened[col] = df_emb[col].values
-
-        # Ensure column order: meta first, then embeddings
         df_emb = df_emb_whitened[meta_cols + embedding_cols]
-
         logger.info("✅ Whitening complete")
 
-        # ✅ Compute correlation if flag set
+        # 4) Compute correlation if requested
         if cfg.get(DO_WHITENING_CORR, 0):
             logger.info("✅ Evaluating whitening distortion (correlation)")
-            try:
-                output_dir = cfg[OUTPUT_DIR]
-                os.makedirs(output_dir, exist_ok=True)
+            emb_after_np = df_emb[embedding_cols].to_numpy(dtype=np.float32, copy=False)
 
-                emb_after_whitening = df_emb[embedding_cols]
+            rng = np.random.default_rng(seed=42)
+            evaluator = Evaluator(rng)
+            corr_metrics = evaluator.correlation(emb_before_np, emb_after_np)
 
-                before_array = emb_before_whitening.values
-                after_array = emb_after_whitening.values
+            logger.info(
+                f"✅ Whitening Correlation – "
+                f"Pearson: {corr_metrics.pearson:.4f} (p={corr_metrics.pearson_pval:.4f}); "
+                f"Spearman: {corr_metrics.spearman:.4f} (p={corr_metrics.spearman_pval:.4f})"
+            )
 
-                rng = np.random.default_rng(seed=42)
-                evaluator = Evaluator(rng)
-                corr_metrics = evaluator.correlation(before_array, after_array)
+            output_dir = cfg[OUTPUT_DIR]
+            os.makedirs(output_dir, exist_ok=True)
+            emb_name = emb_type or "default"
+            corr_file = os.path.join(output_dir, f"whitening_corr_{emb_name}.csv")
+            pd.DataFrame([{
+                "embedding_name": emb_name,
+                "pearson": corr_metrics.pearson,
+                "spearman": corr_metrics.spearman,
+                "pearson_pval": corr_metrics.pearson_pval,
+                "spearman_pval": corr_metrics.spearman_pval
+            }]).to_csv(corr_file, index=False)
+            logger.info(f"✅ Whitening correlation metrics saved to {corr_file}")
 
-                logger.info(f"✅ Whitening Correlation - Pearson: {corr_metrics.pearson:.4f}, Spearman: {corr_metrics.spearman:.4f}")
-                logger.info(f" - Pearson p-value: {corr_metrics.pearson_pval:.4f}, Spearman p-value: {corr_metrics.spearman_pval:.4f}")
-
-                emb_name = emb_type if emb_type else "default"
-                corr_file = os.path.join(output_dir, f"whitening_corr_{emb_name}.csv")
-
-                pd.DataFrame([{
-                    "embedding_name": emb_name,
-                    "pearson": corr_metrics.pearson,
-                    "spearman": corr_metrics.spearman,
-                    "pearson_pval": corr_metrics.pearson_pval,
-                    "spearman_pval": corr_metrics.spearman_pval
-                }]).to_csv(corr_file, index=False)
-
-                logger.info(f"✅ Whitening correlation metrics saved to {corr_file}")
-
-            except Exception as e:
-                logger.error(f"❌ Error computing whitening correlation: {e}")
-        
     else:
-        logger.info("⚠️  Whitening skipped (DO_WHITENING=0)")
+        logger.info("⚠️ Whitening skipped (DO_WHITENING=0)")
+
 
     log_memory('Before renaming rinpersoon')
 
