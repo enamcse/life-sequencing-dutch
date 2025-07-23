@@ -1,0 +1,46 @@
+{
+  "RAW_SAV_DIR": "/data/raw/zvw_sav",
+  "PARTITIONED_OUT_DIR": "/data/processed/zvw_parquet_partitioned",
+  "OUTPUT_DIR": "/data/processed/zvw_outputs",
+
+  "STATS_CSV_FROM_USER": "/data/docs/column_stats.csv",
+  "ID_COLUMN": "RINPERSOON",
+  "SECOND_ID_COLUMN": "RINPERSOON2",
+  "YEAR_EXTRACT_REGEX": "(19|20)\\d{2}",            
+  "GENESIS_DATE": "1971-12-30",
+
+  "COST_COLUMNS": [
+    "ZVWKZIEKENHUIS","ZVWKFARMACIE","ZVWKGGZ","ZVWKSPECGGZ","ZVWKWYKVERPLEGING",
+    "ZVWKHUISARTS","NOPZVWKGGZZVINST","NOPZVWKGGZMV","ZVWKHULPMIDDEL",
+    "NOPZVWKHUISARTSINSCHRIJF","NOPZVWKHUISARTSOVERIG","ZVWKPARAMEDISCH",
+    "ZVWKTOTAAL","ZVWKGGZZPMTOTAAL","NOPZVWKGGZZPMCONSULT"
+  ],
+
+  "FILL_MISSING_NUMERIC_WITH": null,                
+  "CAST_INT_TO_FLOAT": true,                         
+
+  "CORR_SETTINGS": {
+    "log_transform": "log1p",                        
+    "min_nonzero_pairs": 1000,
+    "min_all_pairs": 10000,
+    "presence_metrics": ["phi","jaccard"],
+    "value_metrics": ["pearson","spearman"],
+    "value_presence_metric": "pointbiserial",
+
+    "merge_thresholds_default": {
+      "abs_pearson": 0.90,
+      "phi": 0.70,
+      "min_pairs": 100000
+    }
+  },
+
+  "VISUALIZATION": {
+    "heatmaps": true,
+    "cluster_order": true,
+    "sample_scatter_points": 50000,
+    "dpi": 200,
+    "font_size": 9
+  },
+
+  "RANDOM_SEED": 42
+}
