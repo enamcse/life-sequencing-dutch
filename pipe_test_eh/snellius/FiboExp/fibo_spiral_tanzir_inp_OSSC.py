@@ -271,16 +271,16 @@ def load_data(embedding_file, background_file, cfg, emb_type=None):
         log_memory("✅ Whitening embeddings as per config")
 
         # 1) Grab one single NumPy view of all embeddings (no copy)
-        emb_np = df_emb[embedding_cols].to_numpy(dtype=np.float32, copy=False)
-        log_memory("✅ Grabbed embeddings as NumPy array")
-
+        # emb_np = df_emb[embedding_cols].to_numpy(dtype=np.float32, copy=False)
+        # log_memory("✅ Grabbed embeddings as NumPy array")
+        
         # Preserve for correlation, if requested
-        if cfg.get(DO_WHITENING_CORR, 0):
-            emb_before_np = emb_np
+        # if cfg.get(DO_WHITENING_CORR, 0):
+        #    emb_before_np = emb_np
 
         # 2) Streamed whitening in chunks
         log_memory("START whitening")
-        whitened_np = streamed_whitening_np(emb_np, chunk_size=100_000)
+        whitened_np = streamed_whitening_df(df_emb, embedding_cols, chunk_size=100_000)
         log_memory("DONE whitening")
 
         # 3) Rebuild df_emb from whitened_np + meta columns
