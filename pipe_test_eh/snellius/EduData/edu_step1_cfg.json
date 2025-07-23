@@ -1,0 +1,43 @@
+{
+  "output_dir": "/gpfs/ostor/ossc9424/data/eh2/step1_out",
+
+  "background": {
+    "path": "/gpfs/ostor/ossc9424/data/eh2/background.csv",
+    "format": "csv",
+    "columns": {
+      "rinpersoon": "RINPERSOON",
+      "birth_year": "year",
+      "birth_month": "month"
+    },
+    "assumed_birth_day": 15
+  },
+
+  "inputs": [
+    {
+      "name": "cito_scores",
+      "path": "/gpfs/ostor/ossc9424/data/eh2/cito.parquet",
+      "format": "parquet",
+      "columns": {
+        "rinpersoon": "rinpersoon",
+        "year": "year",
+        "assessment": "assessment",
+        "value": "value"
+      },
+      "date": { "source": "year", "month": 5, "day": 1 },
+      "special_values": {}
+    },
+    {
+      "name": "ce_scores",
+      "path": "/gpfs/ostor/ossc9424/data/eh2/ce.parquet",
+      "format": "parquet",
+      "columns": {
+        "rinpersoon": "rinpersoon",
+        "year": "year",
+        "assessment": "assessment",
+        "value": "value"
+      },
+      "date": { "source": "year", "month": 5, "day": 1 },
+      "special_values": {}
+    }
+  ]
+}
