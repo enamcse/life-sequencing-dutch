@@ -59,6 +59,8 @@ def process_one_file(file_cfg: dict, bg_df: pd.DataFrame, out_dir: Path):
         file_cfg["columns"]["value"]: "value"
     }
     df = df.rename(columns=colmap)
+    df["RINPERSOON"] = pd.to_numeric(df["RINPERSOON"], errors="coerce").astype("Int64") 
+
 
     # Keep extra columns
     known = set(colmap.values())
@@ -74,6 +76,16 @@ def process_one_file(file_cfg: dict, bg_df: pd.DataFrame, out_dir: Path):
         ), errors="coerce"
     ).dt.date
     df["event_date"] = event_dates  # drop later if you don't want
+
+    # --- dtype sanity just before merging ---
+    if df["RINPERSOON"].dtype != bg_df["RINPERSOON"].dtype:
+        logging.warning(
+            "RINPERSOON dtype mismatch (%s vs %s); coercing both to Int64",
+            df["RINPERSOON"].dtype, bg_df["RINPERSOON"].dtype
+        )
+        df["RINPERSOON"] = pd.to_numeric(df["RINPERSOON"], errors="coerce").astype("Int64")
+        bg_df["RINPERSOON"] = pd.to_numeric(bg_df["RINPERSOON"], errors="coerce").astype("Int64")
+
 
     # Merge birth date
     df = df.merge(bg_df, on="RINPERSOON", how="left")
@@ -131,6 +143,7 @@ def stage_convert(cfg: dict):
 
     birth_dates = build_birth_dates(bg, by, bm, assumed_day)
     bg = bg[[rp]].rename(columns={rp: "RINPERSOON"})
+    bg["RINPERSOON"] = pd.to_numeric(bg["RINPERSOON"], errors="coerce").astype("Int64") 
     bg["birth_date"] = birth_dates
 
     # Process each input with a progress bar
