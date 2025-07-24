@@ -160,9 +160,9 @@ def stage_stats_corr(cfg):
     vis_cfg  = cfg["VISUALIZATION"]
 
     # -------- load all parquet parts lazily ----------
-    print("Reading partitioned parquet dataset...")
+    print("Reading partitioned parquet dataset (no hive partitioning)...")
     # Build dataset
-    dataset = pq.ParquetDataset(part_dir)
+    dataset = pq.ParquetDataset(part_dir, partitioning=None)
     table = dataset.read()  # With 500GB RAM might still be fine; if not, switch to scan->to_pandas in chunks
     df = table.to_pandas()
 
