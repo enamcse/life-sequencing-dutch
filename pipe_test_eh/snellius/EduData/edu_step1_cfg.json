@@ -9,7 +9,8 @@
       "birth_year": "year",
       "birth_month": "month"
     },
-    "assumed_birth_day": 15
+    "assumed_birth_day": 15,
+    "birth_year_offset": 1885
   },
 
   "inputs": [
