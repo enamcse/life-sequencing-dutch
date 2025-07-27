@@ -3,7 +3,7 @@
   "OUTPUT_DIR": "/gpfs/ostor/ossc9424/data/eh2/health_lucas_out",
   "DATASETS": {
     "specialist": {
-      "input_pattern": "specialist/*.txt",
+      "input_pattern": "specialist/specialist_*.txt",
       "format": "space",
       "columns": [
         "RINPERSOON",
@@ -24,7 +24,7 @@
       ]
     },
     "medicine": {
-      "input_pattern": "medicine/*.csv",
+      "input_pattern": "medicine/medicine_*.csv",
       "format": "csv",
       "columns": [
         "RINPERSOON",

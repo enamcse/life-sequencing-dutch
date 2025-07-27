@@ -124,11 +124,9 @@ def convert(cfg):
     df["daysSinceFirst"] = (df["event_date"] - genesis).dt.days
     # age in years, floor
     df["age"] = (
-        df["event_date"].dt.year - df["birth_date"].dt.year
-        - ((df["event_date"].dt.month < df["birth_date"].dt.month) |
-           ((df["event_date"].dt.month == df["birth_date"].dt.month) &
-            (df["event_date"].dt.day   < df["birth_date"].dt.day)
-           )).astype(int)
+        (df["event_date"] - df["birth_date"])
+        .dt.days
+        .div(365.2425)
     )
 
     # 4) aggregate cost‑groups
