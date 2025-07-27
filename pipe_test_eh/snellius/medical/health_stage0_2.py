@@ -14,6 +14,7 @@ import json
 import glob
 import argparse
 import warnings
+import logging
 from pathlib import Path
 from collections import defaultdict
 
@@ -23,8 +24,17 @@ import pyreadstat
 import pyarrow as pa
 import pyarrow.parquet as pq
 from scipy.stats import spearmanr, pointbiserialr
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # -------------------------- helpers ---------------------------
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
 def ensure_dir(p):
     Path(p).mkdir(parents=True, exist_ok=True)
@@ -48,13 +58,8 @@ def jaccard(x, y):
     return inter / union if union else np.nan
 
 def corr_matrix_heatmap(df, title, out_png, cluster=True, dpi=200, fs=9):
-    import matplotlib.pyplot as plt
-    try:
-        import seaborn as sns
-    except ImportError:
-        sns = None
 
-    mat = df.values
+    mat = df.fillna(0).values
     labels = df.index.tolist()
 
     if cluster and sns:
@@ -91,19 +96,22 @@ def stage_convert(cfg):
     all_cols_set = set([id_col] + cost_cols)
     if cfg.get("SECOND_ID_COLUMN"): all_cols_set.add(cfg["SECOND_ID_COLUMN"])
 
+    logging.info(f"Converting .sav files in {raw_dir} to partitioned Parquet in {out_dir}")
     sav_files = sorted(glob.glob(os.path.join(raw_dir, "*.sav")))
     if not sav_files:
         raise FileNotFoundError(f"No .sav files found in {raw_dir}")
 
     for sav in sav_files:
         year = extract_year(os.path.basename(sav), year_regex)
-        print(f"Reading {sav} (year {year})")
+        logging.info(f"Reading {sav} (year {year})")
         df, meta = pyreadstat.read_sav(sav, apply_value_formats=False)
 
         # Ensure ID column(s) exist
         if id_col not in df.columns:
+            logging.warning(f"{id_col} not found in {sav}; trying to infer...")
             # try to locate any RIN prefix
             candidates = [c for c in df.columns if c.upper().startswith("RIN")]
+            logging.info(f"Candidates for {id_col}: {candidates}")
             if candidates:
                 df = df.rename(columns={candidates[0]: id_col})
             else:
@@ -116,22 +124,26 @@ def stage_convert(cfg):
 
         # Keep only desired columns that exist
         keep = [c for c in all_cols_set if c in df.columns]
+        logging.info(f"Keeping columns: {keep}")
         df = df[keep].copy()
         df["year"] = year
 
         # Add missing cost columns as NaN (or fill value)
         missing_cols = [c for c in all_cols_set if c not in df.columns and c != "year"]
+        logging.info(f"Adding missing columns: {missing_cols}")
         for mc in missing_cols:
             df[mc] = np.nan
 
         # Enforce numeric dtypes to be float (for NaN compatibility)
         if cast_int_to_float:
+            logging.info(f"Ensuring numeric columns are float: {cost_cols}")
             for c in cost_cols:
                 if c in df.columns and pd.api.types.is_integer_dtype(df[c]):
                     df[c] = df[c].astype("float64")
 
         # Fill numeric missing if configured
         if fill_missing is not None:
+            logging.info(f"Filling missing numeric values with {fill_missing}")
             for c in cost_cols:
                 if c in df.columns:
                     df[c] = df[c].fillna(fill_missing)
@@ -141,9 +153,9 @@ def stage_convert(cfg):
         ensure_dir(year_dir)
         out_file = os.path.join(year_dir, f"part-{year}.parquet")
         df.to_parquet(out_file, index=False)
-        print(f"  -> wrote {out_file}")
+        logging.info(f"  -> wrote {out_file}")
 
-    print("Stage convert done.")
+    logging.info("Stage convert done.")
 
 # ----------------------- Stage 2 ------------------------------
 
@@ -160,18 +172,20 @@ def stage_stats_corr(cfg):
     vis_cfg  = cfg["VISUALIZATION"]
 
     # -------- load all parquet parts lazily ----------
-    print("Reading partitioned parquet dataset (no hive partitioning)...")
+    logging.info("Reading partitioned parquet dataset (no hive partitioning)...")
     # Build dataset
     dataset = pq.ParquetDataset(part_dir, partitioning=None)
     table = dataset.read()  # With 500GB RAM might still be fine; if not, switch to scan->to_pandas in chunks
     df = table.to_pandas()
 
     # Sanity: ensure all columns present
+    logging.info(f"Ensuring all cost columns are present: {cost_cols}")
     for c in cost_cols:
         if c not in df.columns:
             df[c] = np.nan
 
     # Basic per-column stats (zeros, non-zeros, missing etc.)
+    logging.info("Calculating basic column stats...")
     stats_rows = []
     total_rows = len(df)
     for c in cost_cols:
@@ -197,21 +211,25 @@ def stage_stats_corr(cfg):
     stats_df = pd.DataFrame(stats_rows)
     stats_csv = os.path.join(out_dir, "column_stats_recomputed.csv")
     stats_df.to_csv(stats_csv, index=False)
-    print(f"Wrote stats: {stats_csv}")
+    logging.info(f"Wrote stats: {stats_csv}")
 
     # ---------- Correlation calculations -------------
     # Presence matrix
+    logging.info("Calculating presence matrix (binary 0/1 for non-zero values)...")
     presence = pd.DataFrame({
         c: (df[c].fillna(0) > 0).astype(np.int8) for c in cost_cols
     })
 
     # Value matrix for non-zeros pairs: we will do pairwise, so no need to precompute big matrix
     # but we can log-transform entire df once
+    logging.info("Log-transforming cost columns for value-value correlations...")
     if corr_cfg["log_transform"] == "log1p":
         log_df = np.log1p(df[cost_cols].fillna(0))
     else:
         log_df = df[cost_cols].fillna(0)
 
+    # Pairwise correlations
+    logging.info("Calculating pairwise correlations...")
     pairs = []
     n_cols = len(cost_cols)
     for i in range(n_cols):
@@ -261,10 +279,11 @@ def stage_stats_corr(cfg):
     pairs_df = pd.DataFrame(pairs)
     pairs_csv = os.path.join(out_dir, "pairwise_correlations.csv")
     pairs_df.to_csv(pairs_csv, index=False)
-    print(f"Wrote pairwise correlations: {pairs_csv}")
+    logging.info(f"Wrote pairwise correlations: {pairs_csv}")
 
     # ----- Build square matrices for heatmaps (phi & pearson) -----
     # Presence phi
+    logging.info("Building square matrices for phi and Pearson correlations...")
     phi_mat = pd.DataFrame(np.eye(n_cols), index=cost_cols, columns=cost_cols, dtype=float)
     pear_mat = pd.DataFrame(np.eye(n_cols), index=cost_cols, columns=cost_cols, dtype=float)
 
@@ -277,7 +296,7 @@ def stage_stats_corr(cfg):
     pear_csv = os.path.join(out_dir, "pearson_log_matrix.csv")
     phi_mat.to_csv(phi_csv)
     pear_mat.to_csv(pear_csv)
-    print(f"Wrote matrices: {phi_csv}, {pear_csv}")
+    logging.info(f"Wrote matrices: {phi_csv}, {pear_csv}")
 
     if vis_cfg["heatmaps"]:
         ensure_dir(os.path.join(out_dir, "plots"))
@@ -289,16 +308,53 @@ def stage_stats_corr(cfg):
         corr_matrix_heatmap(pear_mat, "Value-Value (log1p) Pearson", pear_png,
                             cluster=vis_cfg["cluster_order"],
                             dpi=vis_cfg["dpi"], fs=vis_cfg["font_size"])
-        print(f"Wrote heatmaps: {phi_png}, {pear_png}")
+        logging.info(f"Wrote heatmaps: {phi_png}, {pear_png}")
 
-    print("Stage stats_corr done.")
+    logging.info("Stage stats_corr done.")
+
+# —————— generate heatmap from csvs ——————
+def stage_stats_corr_heatmap(cfg):
+    out_dir = cfg["OUTPUT_DIR"]
+    # paths to your existing CSVs
+    phi_csv  = os.path.join(out_dir, "phi_matrix.csv")
+    pear_csv = os.path.join(out_dir, "pearson_log_matrix.csv")
+
+    # quick‑plot branch
+    logging.info("🔄 Heatmap‑only mode: loading existing CSVs and plotting…")
+    phi_mat  = pd.read_csv(phi_csv,  index_col=0)
+    pear_mat = pd.read_csv(pear_csv, index_col=0)
+
+    plots_dir = os.path.join(out_dir, "plots")
+    ensure_dir(plots_dir)
+
+    corr_matrix_heatmap(
+        phi_mat,
+        "Presence (Phi) Correlation",
+        os.path.join(plots_dir, "phi_heatmap.png"),
+        cluster=cfg["VISUALIZATION"]["cluster_order"],
+        dpi=cfg["VISUALIZATION"]["dpi"],
+        fs=cfg["VISUALIZATION"]["font_size"]
+    )
+    corr_matrix_heatmap(
+        pear_mat,
+        "Value-Value (log1p) Pearson Correlation",
+        os.path.join(plots_dir, "pearson_log_heatmap.png"),
+        cluster=cfg["VISUALIZATION"]["cluster_order"],
+        dpi=cfg["VISUALIZATION"]["dpi"],
+        fs=cfg["VISUALIZATION"]["font_size"]
+    )
+    logging.info("✅ Heatmaps generated from existing CSVs.")
+    return
 
 # --------------------------- main -----------------------------
 
 def main():
+    setup_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfg", required=True)
-    parser.add_argument("--stage", choices=["convert","stats_corr","all"], default="all")
+    parser.add_argument("--stage",  choices=["convert","stats_corr","all","heatmap"],
+                    default="all",
+                    help="heatmap: skip heavy work, just load CSVs & plot")
     args = parser.parse_args()
 
     with open(args.cfg) as f:
@@ -311,6 +367,10 @@ def main():
 
     if args.stage in ("stats_corr","all"):
         stage_stats_corr(cfg)
+
+    # To avoid the 2.30 hours of processing time, and plot from existing CSVs
+    if args.stage == "heatmap":
+        stage_stats_corr_heatmap(cfg)
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore", category=FutureWarning)
