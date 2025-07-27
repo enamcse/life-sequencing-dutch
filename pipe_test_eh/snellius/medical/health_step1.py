@@ -108,10 +108,15 @@ def convert(cfg):
 
     # 2) merge background
     bg = load_background(cfg)
+    logging.info(f"Loaded background data with {len(bg):,} rows")
+    
+    logging.info(f"Merging background data with {len(df):,} rows")
+
     # align types
     df[id_col] = df[id_col].astype(str)
     bg[id_col] = bg[id_col].astype(str)
-    df = df.merge(bg, on=id_col, how="left")
+    df = df.merge(bg, on=id_col, how="inner")
+    logging.info(f"After merge: {len(df):,} rows")
 
     # 3) compute event_date, daysSinceFirst, age
     ev = cfg["EVENT_DATE"]
