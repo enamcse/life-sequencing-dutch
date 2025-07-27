@@ -73,7 +73,8 @@ def process_dataset(raw_dir, out_dir, name, spec):
             typ = "Numeric" if col in spec.get("numeric_cols",[]) else "String"
 
             # grab SPSS value labels
-            vl = meta.value_labels.get(col, {})
+            sav_col = spec.get("meta_sav_map", {}).get(col, col)
+            vl = meta.value_labels.get(sav_col, {})
 
             # grab user‑defined missing values & ranges
             mv = meta.missing_user_values.get(col, [])[:]

@@ -42,7 +42,10 @@
       "string_cols": [
         "medication_category"
       ],
-      "meta_sav": "for_meta/medicine.sav"
+      "meta_sav": "for_meta/medicine.sav",
+      "meta_sav_map": {
+        "medication_category": "ATC4"
+      }
     },
     "mental_health": {
       "input_pattern": "mental_health.txt",
