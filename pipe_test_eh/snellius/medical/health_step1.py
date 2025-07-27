@@ -27,9 +27,12 @@ def load_background(cfg):
         df = pd.read_parquet(bg["path"])
     # rename to canonical
     df = df.rename(columns={k: v for k, v in bg["columns"].items()})
+    logging.info(f'Loaded background data with {len(df):,} rows')
+    logging.info(f'Columns: {", ".join(df.columns)}')
+    logging.info(f'Sample:\n{df.head()}')
     # build full birth_date
-    df["birth_month"] = df["birth_month"].fillna(1).astype(int)
-    df["birth_year"]  = df["birth_year"].astype(int)
+    df["birth_month"] = df[bg['columns']["birth_month"]].fillna(1).astype(int)
+    df["birth_year"]  = df[bg['columns']["birth_year"]].astype(int)
     df["birth_day"]   = bg.get("assumed_birth_day", 1)
 
     offset = bg.get('birth_year_offset', 0)

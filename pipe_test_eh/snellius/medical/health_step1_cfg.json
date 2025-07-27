@@ -5,12 +5,13 @@
     "format":           "csv",
     "columns": {
       "rinpersoon":     "RINPERSOON",
-      "birth_year":     "birth_year",
-      "birth_month":    "birth_month",
+      "birth_year":     "year",
+      "birth_month":    "month",
       "gender":         "gender",
       "origin":         "origin"
     },
-    "assumed_birth_day": 1
+    "assumed_birth_day": 1,
+    "birth_year_offset": 1885
   },
   "OUTPUT_DIR":         "/data/processed/zvw_final",
   "DATA_FILE":          "ZVWZORGKOSTEN.parquet",
@@ -42,6 +43,6 @@
     ]
   },
 
-  "DROP_ZERO_ROWS":     true,
+  "DROP_ZERO_ROWS":     false,
   "ID_COLUMN":          "RINPERSOON"
 }
