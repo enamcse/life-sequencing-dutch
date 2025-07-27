@@ -324,6 +324,9 @@ def stage_stats_corr_heatmap(cfg):
     phi_mat  = pd.read_csv(phi_csv,  index_col=0)
     pear_mat = pd.read_csv(pear_csv, index_col=0)
 
+    phi_mat  = phi_mat.replace([np.inf, -np.inf], np.nan).fillna(0)
+    pear_mat = pear_mat.replace([np.inf, -np.inf], np.nan).fillna(0)
+
     plots_dir = os.path.join(out_dir, "plots")
     ensure_dir(plots_dir)
 
