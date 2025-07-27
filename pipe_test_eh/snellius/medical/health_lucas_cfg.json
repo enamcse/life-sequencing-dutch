@@ -21,7 +21,8 @@
       ],
       "string_cols": [
         "VEKTMSZUitvoerendSpecialisme"
-      ]
+      ],
+      "meta_sav": "for_meta/specialist.sav"
     },
     "medicine": {
       "input_pattern": "medicine/medicine_*.csv",
@@ -40,7 +41,8 @@
       ],
       "string_cols": [
         "medication_category"
-      ]
+      ],
+      "meta_sav": "for_meta/medicine.sav"
     },
     "mental_health": {
       "input_pattern": "mental_health.txt",
@@ -63,7 +65,8 @@
         "GGZDBCCircuitHOOFDDIAG",
         "GGZDBCHoofddiagnoseDSMIVHOOFDDIAG",
         "begOrEnd"
-      ]
+      ],
+      "meta_sav": "for_meta/mental_health.sav"
     }
   }
 }

@@ -7,12 +7,21 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import pyreadstat
+import logging
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
 def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
 def process_dataset(raw_dir, out_dir, name, spec):
-    print(f"\n▶ Processing '{name}'")
+    logging.info(f"\n▶ Processing '{name}'")
     pattern = os.path.join(raw_dir, spec["input_pattern"])
     files = sorted(glob.glob(pattern))
     if not files:
@@ -20,7 +29,7 @@ def process_dataset(raw_dir, out_dir, name, spec):
 
     dfs = []
     for fpath in files:
-        print(f"   • loading {os.path.basename(fpath)}")
+        logging.info(f"   • loading {os.path.basename(fpath)}")
         if spec["format"] == "csv":
             df = pd.read_csv(fpath)
         elif spec["format"] == "space":
@@ -49,25 +58,55 @@ def process_dataset(raw_dir, out_dir, name, spec):
     # write the data parquet
     out_data = os.path.join(out_dir, f"{name}.parquet")
     df.to_parquet(out_data, index=False)
-    print(f"   ✔ Wrote {out_data} ({len(df):,} rows)")
+    logging.info(f"   ✔ Wrote {out_data} ({len(df):,} rows)")
 
-    # build and write the meta parquet
+    # ---- now build the meta parquet based on the SAV ----
+    sav_path = os.path.join(raw_dir, spec.get("meta_sav", ""))
     rows = []
-    for col in df.columns:
-        typ = "Numeric" if col in spec.get("numeric_cols", []) else "String"
-        rows.append({
-            "Name": col,
-            "Type": typ,
-            "ValueLabels": {}
-        })
+    if os.path.isfile(sav_path):
+        logging.info(f"   • loading metadata from {sav_path}")
+        _, meta = pyreadstat.read_sav(sav_path, apply_value_formats=False)
+
+        # for every column in the final parquet
+        for col in df.columns:
+            # decide type
+            typ = "Numeric" if col in spec.get("numeric_cols",[]) else "String"
+
+            # grab SPSS value labels
+            vl = meta.value_labels.get(col, {})
+
+            # grab user‑defined missing values & ranges
+            mv = meta.missing_user_values.get(col, [])[:]
+            for lo, hi in meta.missing_ranges.get(col, []):
+                mv.extend(list(range(lo, hi+1)))
+            # mark all missing codes in the same dict
+            missing_labels = {int(c): "system missing" for c in mv}
+
+            # merge them (labels take precedence)
+            all_labels = {**missing_labels, **{int(k):v for k,v in vl.items()}}
+
+            rows.append({
+                "Name": col,
+                "Type": typ,
+                "ValueLabels": all_labels
+            })
+    else:
+        logging.warning(f"   ⚠️  No SAV found for metadata at {sav_path}; using empty ValueLabels")
+        for col in df.columns:
+            typ = "Numeric" if col in spec.get("numeric_cols",[]) else "String"
+            rows.append({"Name":col, "Type":typ, "ValueLabels":{}})
+
     meta_df = pd.DataFrame(rows)
+    # JSON‑serialize the dict in each row
     meta_df["ValueLabels"] = meta_df["ValueLabels"].apply(json.dumps, ensure_ascii=False)
 
     out_meta = os.path.join(out_dir, f"{name}_meta.parquet")
     meta_df.to_parquet(out_meta, index=False)
-    print(f"   ✔ Wrote {out_meta}")
+    logging.info(f"   ✔ Wrote {name}_meta.parquet")
+
 
 def main():
+    setup_logging()
     p = argparse.ArgumentParser(description="Convert Lucas health files to Parquet+meta")
     p.add_argument("--cfg", required=True, help="Path to JSON config")
     args = p.parse_args()
