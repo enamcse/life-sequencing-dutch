@@ -6,6 +6,7 @@ import numpy  as np
 import pandas as pd
 from tqdm import tqdm
 import pandas.api.types as pst
+import pyreadstat
 
 
 # ---------- helpers ----------
@@ -131,12 +132,22 @@ def convert(cfg):
     )
 
     # 4) aggregate cost‑groups
+    logging.info("🔢 Aggregating cost groups:")
     for group, cols in tqdm(cfg["COST_GROUPS"].items(), desc="Aggregating cost groups"):
-        # ensure missing raw cols exist
-        for c in tqdm(cols, desc=f"Processing columns for {group}", leave=False):
-            if c not in df.columns:
-                df[c] = 0.0
-        df[group] = df[cols].sum(axis=1)
+        logging.info(f"   • {group}")
+
+        # (1) find which of these raw cols actually appeared in this DF
+        present = [c for c in cols if c in df.columns]
+
+        if not present:
+            # NONE of these ever existed → truly unavailable
+            df[group] = sentinel
+        else:
+            # (2) for the ones that do exist, treat
+            #     NaN  as 0 (no claim) *not* as missing,
+            #     sentinel as missing/unavailable if you like
+            part = df[present].fillna(0.0)
+            df[group] = part.sum(axis=1)
 
     # 5) drop pure zero rows if requested
     if cfg.get("DROP_ZERO_ROWS", False):
