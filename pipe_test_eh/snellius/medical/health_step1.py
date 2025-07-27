@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import logging
-import os, json, glob, argparse
+import os, json, glob, argparse, re
 from pathlib import Path
 import numpy  as np
 import pandas as pd
 from tqdm import tqdm
+import pandas.api.types as pst
 
 
 # ---------- helpers ----------
@@ -19,6 +20,11 @@ def setup_logging():
 def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
+def extract_year(fname, regex):
+    m = re.search(regex, fname)
+    if not m:
+        raise ValueError(f"Cannot extract year from '{fname}'")
+    return int(m.group(0))
 def load_background(cfg):
     bg = cfg["BACKGROUND"]
     if bg["format"] == "csv":
@@ -59,28 +65,69 @@ def compute_event_df(cfg):
     return df
 
 def convert(cfg):
-    # 1) load raw events
-    df = compute_event_df(cfg)
+    raw_dir = cfg["RAW_SAV_DIR"]
+    out_dir = cfg["OUTPUT_DIR"]
+    sentinel = cfg["MISSING_VALUE_SENTINEL"]
+    year_re  = cfg["YEAR_EXTRACT_REGEX"]
+    cost_groups = cfg["COST_GROUPS"]
+    id_col = cfg["ID_COLUMN"]
 
-    # 2) merge in background to get birth_date
+    # 1) read & concatenate all .sav
+    frames = []
+    savs = sorted(glob.glob(os.path.join(raw_dir, "*.sav")))
+    if not savs:
+        raise FileNotFoundError(f"No SAV files in {raw_dir}")
+    for sav in savs:
+        year = extract_year(os.path.basename(sav), year_re)
+        print(f"⏳ Loading {sav} (year={year})")
+        df, meta = pyreadstat.read_sav(sav, apply_value_formats=False)
+
+        # ensure ID present
+        if id_col not in df.columns:
+            cands = [c for c in df.columns if c.upper().startswith("RIN")]
+            if cands:
+                df = df.rename(columns={cands[0]: id_col})
+            else:
+                raise KeyError(f"{id_col} not in {sav}")
+
+        # extract year
+        df["year"] = year
+
+        # map any NaN → sentinel
+        df = df.fillna(sentinel)
+
+        # keep only id, year, and all cost cols that appear
+        cols = [id_col, "year"]
+        for grp in cost_groups.values():
+            cols += [c for c in grp if c in df.columns]
+        frames.append(df[cols])
+
+    df = pd.concat(frames, ignore_index=True)
+    frames.clear()
+
+    # 2) merge background
     bg = load_background(cfg)
-    df = df.merge(bg, on="RINPERSOON", how="left")
+    # align types
+    df[id_col] = df[id_col].astype(str)
+    bg[id_col] = bg[id_col].astype(str)
+    df = df.merge(bg, on=id_col, how="left")
 
     # 3) compute event_date, daysSinceFirst, age
     ev = cfg["EVENT_DATE"]
     df["event_date"] = pd.to_datetime(dict(
         year = df[ev["year_column"]].astype(int),
-        month = ev["month"],
-        day   = ev["day"]
+        month= ev["month"],
+        day  = ev["day"]
     ))
     genesis = pd.to_datetime(cfg["GENESIS_DATE"])
     df["daysSinceFirst"] = (df["event_date"] - genesis).dt.days
+    # age in years, floor
     df["age"] = (
         df["event_date"].dt.year - df["birth_date"].dt.year
-        - ((df["event_date"].dt.month  < df["birth_date"].dt.month) |
-           (df["event_date"].dt.month == df["birth_date"].dt.month) &
-           (df["event_date"].dt.day   < df["birth_date"].dt.day)
-          ).astype(int)
+        - ((df["event_date"].dt.month < df["birth_date"].dt.month) |
+           ((df["event_date"].dt.month == df["birth_date"].dt.month) &
+            (df["event_date"].dt.day   < df["birth_date"].dt.day)
+           )).astype(int)
     )
 
     # 4) aggregate cost‑groups
@@ -114,12 +161,13 @@ def convert(cfg):
     # 8) build and write meta.parquet
     rows = []
     for col in out_cols:
-        typ = "Numeric" if np.issubdtype(df_final[col].dtype, np.number) else "String"
-        rows.append({
-            "Name": col,
-            "Type": typ,
-            "ValueLabels": {}
-        })
+        # use pandas’ dtype check so we handle extension dtypes like Int64
+        typ = "Numeric" if pst.is_numeric_dtype(df_final[col].dtype) else "String"
+        # record sentinel in ValueLabels if a cost group
+        labels = {}
+        if col in cost_groups and sentinel is not None:
+            labels = {str(sentinel): "missing or unavailable"}
+        rows.append({"Name": col, "Type": typ, "ValueLabels": labels})
     meta_df = pd.DataFrame(rows)
     # ensure ValueLabels column is a dict
     meta_df["ValueLabels"] = meta_df["ValueLabels"].apply(json.dumps)

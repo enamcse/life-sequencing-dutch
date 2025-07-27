@@ -1,5 +1,5 @@
 {
-  "RAW_PARQ_DIR":       "/data/processed/zvw_parquet_partitioned",
+  "RAW_SAV_DIR": "/gpfs/ostor/ossc9424/data/eh2/health_raw",
   "BACKGROUND": {
     "path":             "/data/raw/background.csv",
     "format":           "csv",
@@ -13,10 +13,12 @@
     "assumed_birth_day": 1,
     "birth_year_offset": 1885
   },
+  "YEAR_EXTRACT_REGEX": "(19|20)\\d{2}",
   "OUTPUT_DIR":         "/data/processed/zvw_final",
   "DATA_FILE":          "ZVWZORGKOSTEN.parquet",
   "META_FILE":          "ZVWZORGKOSTEN_meta.parquet",
-
+  "MISSING_VALUE_SENTINEL": 9999999999,
+  
   "GENESIS_DATE":       "1971-12-30",
   "EVENT_DATE": {
     "year_column":      "year",
