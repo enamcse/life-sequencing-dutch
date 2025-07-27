@@ -12,6 +12,8 @@
     "assumed_birth_day": 15,
     "birth_year_offset": 1885
   },
+  
+  "GENESIS_DATE":       "1971-12-30",
 
   "inputs": [
     {

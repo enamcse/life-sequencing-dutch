@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
+import logging
 import os, json, glob, argparse
 from pathlib import Path
 import numpy  as np
 import pandas as pd
+from tqdm import tqdm
+
+
+# ---------- helpers ----------
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
 def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -18,7 +30,15 @@ def load_background(cfg):
     # build full birth_date
     df["birth_month"] = df["birth_month"].fillna(1).astype(int)
     df["birth_year"]  = df["birth_year"].astype(int)
-    df["birth_day"]   = bg.get("assumed_birth_day", 15)
+    df["birth_day"]   = bg.get("assumed_birth_day", 1)
+
+    offset = bg.get('birth_year_offset', 0)
+    logging.info(f'Adjusting birth year offset = {offset} years...')
+
+    if offset != 0:
+        df["birth_year"] += offset
+        logging.info(f'Adjusted birth years: {df["birth_year"].min()} to {df["birth_year"].max()}')
+
     df["birth_date"]  = pd.to_datetime(dict(
         year=df["birth_year"],
         month=df["birth_month"],
@@ -61,9 +81,9 @@ def convert(cfg):
     )
 
     # 4) aggregate cost‑groups
-    for group, cols in cfg["COST_GROUPS"].items():
+    for group, cols in tqdm(cfg["COST_GROUPS"].items(), desc="Aggregating cost groups"):
         # ensure missing raw cols exist
-        for c in cols:
+        for c in tqdm(cols, desc=f"Processing columns for {group}", leave=False):
             if c not in df.columns:
                 df[c] = 0.0
         df[group] = df[cols].sum(axis=1)
@@ -86,7 +106,7 @@ def convert(cfg):
     ensure_dir(cfg["OUTPUT_DIR"])
     out_parq = os.path.join(cfg["OUTPUT_DIR"], cfg["DATA_FILE"])
     df_final.to_parquet(out_parq, index=False)
-    print(f"Wrote data → {out_parq}")
+    logging.info(f"Wrote data → {out_parq}")
 
     # 8) build and write meta.parquet
     rows = []
@@ -102,9 +122,10 @@ def convert(cfg):
     meta_df["ValueLabels"] = meta_df["ValueLabels"].apply(json.dumps)
     out_meta = os.path.join(cfg["OUTPUT_DIR"], cfg["META_FILE"])
     meta_df.to_parquet(out_meta, index=False)
-    print(f"Wrote meta → {out_meta}")
+    logging.info(f"Wrote meta → {out_meta}")
 
 if __name__ == "__main__":
+    setup_logging()
     p = argparse.ArgumentParser()
     p.add_argument("--cfg",    required=True)
     p.add_argument("--stage",  choices=["convert"], default="convert")

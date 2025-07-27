@@ -17,7 +17,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-GENESIS_DATE = dt.date(1971, 12, 30)
 
 # ---------- helpers ----------
 
@@ -105,8 +104,9 @@ def process_one_file(file_cfg: dict, bg_df: pd.DataFrame, out_dir: Path):
 
     logging.info('Start Calculating daysSinceFirst and age...')
     # Compute daysSinceFirst & age
+    genesis = pd.to_datetime(file_cfg["GENESIS_DATE"])
     df["daysSinceFirst"] = (
-        pd.to_datetime(df["event_date"]) - pd.to_datetime(GENESIS_DATE)
+        pd.to_datetime(df["event_date"]) - genesis
     ).dt.days
 
     df["age"] = (
