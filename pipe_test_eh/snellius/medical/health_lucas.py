@@ -66,6 +66,8 @@ def process_dataset(raw_dir, out_dir, name, spec):
     if os.path.isfile(sav_path):
         logging.info(f"   • loading metadata from {sav_path}")
         _, meta = pyreadstat.read_sav(sav_path, apply_value_formats=False)
+        
+        logging.info(f"   • SAV variable_values_labels keys: {list(meta.column_value_labels.items())[:5]}")
 
         # for every column in the final parquet
         for col in df.columns:
@@ -74,7 +76,14 @@ def process_dataset(raw_dir, out_dir, name, spec):
 
             # grab SPSS value labels
             sav_col = spec.get("meta_sav_map", {}).get(col, col)
-            vl = meta.value_labels.get(sav_col, {})
+            logging.info(f"   • Looking for labels under {sav_col}")
+            vl = getattr(meta, "variable_value_labels", {}).get(sav_col)
+            if not isinstance(vl, dict):
+                vl = meta.value_labels.get(sav_col, {})
+            if not isinstance(vl, dict):
+                logging.warning(f"   ⚠️  No value labels found for {sav_col} in {sav_path}")
+                vl = {}
+            logging.info(f"   • Found {len(vl)} value labels for {sav_col}")
 
             # grab user‑defined missing values & ranges
             mv = meta.missing_user_values.get(col, [])[:]

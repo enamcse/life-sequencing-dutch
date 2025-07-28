@@ -1,0 +1,29 @@
+{
+  "target_dirs": [
+    "/gpfs/ostor/ossc9424/data/eh2/health_out",
+    "/another/path/you/might/add"
+  ],
+  "operations": {
+    "rename": {
+      "daysSinceFirst": "daysSinceFirstEvent"
+    },
+    "dtype": {
+      "age": "float64"
+    },
+    "drop": [
+      "unused_column_example"
+    ]
+  },
+  "file_operations": {
+    "cito_scores.parquet": {
+      "rename": {
+        "assessment": "cito_assess"
+      }
+    },
+    "ce_scores.parquet": {
+      "rename": {
+        "assessment": "ce_assess"
+      }
+    }
+  }
+}

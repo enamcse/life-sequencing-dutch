@@ -118,7 +118,7 @@ def convert(cfg):
     df = df.merge(bg, on=id_col, how="inner")
     logging.info(f"After merge: {len(df):,} rows")
 
-    # 3) compute event_date, daysSinceFirst, age
+    # 3) compute event_date, daysSinceFirstEvent, age
     ev = cfg["EVENT_DATE"]
     df["event_date"] = pd.to_datetime(dict(
         year = df[ev["year_column"]].astype(int),
@@ -126,7 +126,7 @@ def convert(cfg):
         day  = ev["day"]
     ))
     genesis = pd.to_datetime(cfg["GENESIS_DATE"])
-    df["daysSinceFirst"] = (df["event_date"] - genesis).dt.days
+    df["daysSinceFirstEvent"] = (df["event_date"] - genesis).dt.days
     # age in years, floor
     df["age"] = (
         (df["event_date"] - df["birth_date"])
@@ -160,7 +160,7 @@ def convert(cfg):
     # 6) select final columns
     out_cols = [
         cfg["ID_COLUMN"],
-        "daysSinceFirst",
+        "daysSinceFirstEvent",
         "age"
     ] + list(cfg["COST_GROUPS"].keys())
 

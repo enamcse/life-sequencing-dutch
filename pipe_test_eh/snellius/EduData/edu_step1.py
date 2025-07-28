@@ -102,10 +102,10 @@ def process_one_file(file_cfg: dict, bg_df: pd.DataFrame, out_dir: Path):
     logging.info(f'Missing event_date # {df["event_date"].isna().sum()}')
     logging.info(f'Missing birth_date # {df["birth_date"].isna().sum()}')
 
-    logging.info('Start Calculating daysSinceFirst and age...')
-    # Compute daysSinceFirst & age
+    logging.info('Start Calculating daysSinceFirstEvent and age...')
+    # Compute daysSinceFirstEvent & age
     genesis = pd.to_datetime(file_cfg["GENESIS_DATE"])
-    df["daysSinceFirst"] = (
+    df["daysSinceFirstEvent"] = (
         pd.to_datetime(df["event_date"]) - genesis
     ).dt.days
 
@@ -113,7 +113,7 @@ def process_one_file(file_cfg: dict, bg_df: pd.DataFrame, out_dir: Path):
         (pd.to_datetime(df["event_date"]) - pd.to_datetime(df["birth_date"]))
         .dt.days / 365.2425
     )
-    logging.info(f"Calculation Completed.\nFound {df['age'].nunique()} unique daysSinceFirst and {df['age'].nunique()} unique age.")
+    logging.info(f"Calculation Completed.\nFound {df['age'].nunique()} unique daysSinceFirstEvent and {df['age'].nunique()} unique age.")
 
     logging.info('Dropping birth_date and event_date....')
     # drop helper if requested
