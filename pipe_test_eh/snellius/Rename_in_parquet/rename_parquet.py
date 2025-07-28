@@ -22,9 +22,10 @@ def apply_ops(df, ops):
         if c in df.columns:
             df[c] = df[c].astype(dt)
     # 3) drop
-    logging.info(f"Dropping columns: {drop_list}")
     drop_list = [c for c in ops.get("drop", []) if c in df.columns]
+
     if drop_list:
+        logging.info(f"Dropping columns: {drop_list}")
         df = df.drop(columns=drop_list)
     return df, drop_list
 
@@ -93,6 +94,8 @@ def process_directory(root, cfg):
             else:
                 logging.warning(f"   ⚠️  meta file not found at {meta_path}")
 
+    logging.info(f"Finished processing directory: {root}")
+
 def main():
     setup_logging()
     p = argparse.ArgumentParser()
@@ -105,6 +108,7 @@ def main():
             process_directory(d, cfg)
         else:
             logging.warning(f"target_dirs entry not found or not a dir: {d}")
+    logging.info("All directories processed.")
 
 if __name__ == "__main__":
     main()
