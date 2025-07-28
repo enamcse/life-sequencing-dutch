@@ -33,7 +33,7 @@ def subset_by_columns(source_dir, dest_dir, columns_path):
     os.makedirs(dest_dir)
     
     # Walk through the source directory structure
-    for root, dirs, files in os.walk(source_dir):
+    for root, dirs, files in os.walk(source_dir, followlinks=True):
         # Create the corresponding directory in dest_dir
         rel_dir = os.path.relpath(root, source_dir)
         dest_subdir = os.path.join(dest_dir, rel_dir) if rel_dir != "." else dest_dir

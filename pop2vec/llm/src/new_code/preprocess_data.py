@@ -12,6 +12,7 @@ from typing import List
 from typing import Union
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from pop2vec.llm.src.new_code.constants import AGE
 from pop2vec.llm.src.new_code.constants import DAYS_SINCE_FIRST
 from pop2vec.llm.src.new_code.constants import INF
@@ -334,24 +335,25 @@ def main():
   )
   path_dicts.extend(get_parquet_data(source_dir, destination_dir))
 
-  for path_dict in path_dicts:
-    if os.path.exists(path_dict["write_path"]):
+  for path_dict in tqdm(path_dicts, desc="Processing files", unit="file"):
+    write_path = path_dict["write_path"]
+    if os.path.exists(write_path):
       if replace_old_data:
-        logging.info(f"Replacing already existing {path_dict['write_path']}.")
+        logging.info(f"Replacing already existing {write_path}.")
       else:
-        logging.info(f"{path_dict['write_path']} already exists. Not replacing file and continuing.")
+        logging.info(f"{write_path} already exists. Not replacing file and continuing.")
         continue
     df, meta = load_data(path_dict, primary_key)
     if df is not None:
       process_and_write(
         df=df,
         meta_dict=meta,
-        write_path=path_dict["write_path"],
+        write_path=write_path,
         primary_key=primary_key,
         immutable_cols=immutable_cols,
         restricted_substrings=restricted_substrings,
       )
-      logging.info(f"{path_dict['write_path']} is written")
+      logging.info(f"{write_path} is written")
 
   for col in all_cols:
     logging.info(
