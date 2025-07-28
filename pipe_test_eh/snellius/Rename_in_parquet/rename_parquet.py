@@ -81,14 +81,27 @@ def process_directory(root, cfg):
             # now meta
             if os.path.isfile(meta_path):
                 meta = pd.read_parquet(meta_path)
-                # rename Name entries
+                # a) rename Name entries
                 rename_map = ops["rename"]
                 mask = meta["Name"].isin(rename_map.keys())
                 if mask.any():
                     meta.loc[mask, "Name"] = meta.loc[mask, "Name"].map(rename_map)
-                # drop rows for dropped columns
+                # b) drop rows for dropped columns
                 if dropped:
                     meta = meta[~meta["Name"].isin(dropped)]
+
+                # c) update Type for any dtype conversions
+                for col, dt in ops.get("dtype", {}).items():
+                    # if you also renamed that column, look up the new name
+                    new_col = ops.get("rename", {}).get(col, col)
+                    m = meta["Name"] == new_col
+                    if m.any():
+                        # treat any integer/float dtype as Numeric
+                        if dt.lower().startswith(("int", "float")):
+                            meta.loc[m, "Type"] = "Numeric"
+                        else:
+                            meta.loc[m, "Type"] = "String"
+
                 meta.to_parquet(meta_path, index=False)
                 logging.info(f"   • meta updated")
             else:
