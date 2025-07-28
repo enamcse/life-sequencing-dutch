@@ -1,0 +1,10 @@
+{
+  "node_dir": "/gpfs/ostor/ossc9424/data/eh2/network_step1_out",  
+  "pop_bucket_file": "/gpfs/ostor/ossc9424/data/eh2/network_step1_out/pop_bucket_ids.parquet",
+  "id_col": "RINPERSOON",
+  "year_col": "YEAR",
+  "bucket_col": "BUCKET_ID",
+  "output_col": "CLUSTER_ID",
+  "node_pattern": "node_features_*.parquet",
+  "meta_suffix": "_meta.parquet"
+}

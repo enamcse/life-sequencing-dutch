@@ -1,0 +1,27 @@
+{
+  "RAW_PARQ_DIR": "/gpfs/ostor/ossc9424/data/eh2/network_raw",
+  "BACKGROUND": {
+    "path": "/gpfs/ostor/ossc9424/data/eh2/background.csv",
+    "format": "csv",
+    "columns": {
+      "rinpersoon":   "RINPERSOON",
+      "birth_year":   "year",
+      "birth_month":  "month",
+      "gender":       "gender",
+      "origin":       "origin"
+    },
+    "assumed_birth_day": 1,
+    "birth_year_offset": 1885
+  },
+  "OUTPUT_DIR": "/gpfs/ostor/ossc9424/data/eh2/network_out",
+  "DATA_FILE":  "network.parquet",
+  "META_FILE":  "network_meta.parquet",
+  "GENESIS_DATE": "1971-12-30",
+  "EVENT_DATE": {
+    "year_column": "YEAR",
+    "month":       1,
+    "day":         1
+  },
+  "ID_COLUMN":     "RINPERSOON",
+  "EVENT_COLUMNS": ["BUCKET_ID"]
+}
