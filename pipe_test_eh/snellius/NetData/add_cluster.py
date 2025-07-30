@@ -80,6 +80,9 @@ def main(cfg):
             if output_col not in meta["Name"].values:
                 meta = pd.concat([meta, pd.DataFrame([new_row])], ignore_index=True)
                 logging.info(f" Meta update: {meta}")
+                meta["ValueLabels"] = meta["ValueLabels"].apply(
+                    lambda v: json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v
+                )
                 meta.to_parquet(meta_path, index=False)
                 logging.info(f"   ✓ wrote meta update ({output_col})")
             else:
