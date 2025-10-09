@@ -15,3 +15,9 @@ logs/
 *logs/*.err
 *logs/*.out
 data/temp_output/
+pipe_test_eh/
+ehtest/
+fake_data_v0/
+venv/
+out_for_*.txt
+tree.txt
