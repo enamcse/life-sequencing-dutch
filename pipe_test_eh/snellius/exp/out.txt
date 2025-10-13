@@ -13,6 +13,8 @@
 
 [5 rows x 165 columns]
 ✅ Sphere points generated: (100, 160)
+✅ Buckets assigned: 18 unique buckets
+Bucket distribution: Counter({58: 2847, 38: 2137, 36: 1332, 69: 1267, 79: 599, 95: 380, 52: 374, 21: 374, 93: 280, 44: 180, 90: 139, 84: 43, 71: 33, 17: 6, 22: 4, 77: 3, 7: 1, 41: 1})
 ✅ Buckets assigned
 ✅ People sampled
 
