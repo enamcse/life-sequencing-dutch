@@ -285,46 +285,61 @@ def _train_one_target(cfg, target_col, target_type, num_outputs):
         nw = 0  # tiny set; avoid spawning workers that can slow/hang on HDF5
         val_dl = torch.utils.data.DataLoader(val_ds, batch_size=cfg["BATCH_SIZE"], shuffle=False, num_workers=nw)
 
-        # Load best checkpoint (read-only)
-        val_model = TransformerFT.load_from_checkpoint(
-            best_ckpt, task_type=target_type, pretrained_model_path=cfg['pretrained_model_path']
-        )
-        val_model.eval()
-        
+        # In recent version, lets name it v1, the following line is added here
+        if trainer.is_global_zero: 
+            single = Trainer(accelerator="cpu", devices=1, logger=False, enable_progress_bar=False
+            ) # Added in v1
+            # Load best checkpoint (read-only)
+            val_model = TransformerFT.load_from_checkpoint(
+                best_ckpt, task_type=target_type, pretrained_model_path=cfg['pretrained_model_path'], strict=False
+            )
+            val_model.eval()
+            
 
-        # Distributed predict on ALL ranks
-        val_outputs = trainer.predict(val_model, val_dl, return_predictions=True)
+            # Distributed predict on ALL ranks
+            outs = single.predict(val_model, val_dl, return_predictions=True) # Changed in v1
+            # val_outputs = trainer.predict(val_model, val_dl, return_predictions=True)
 
-        # Local tensors
-        # key = cfg.get("PRIMARY_KEY", "RINPERSOON")
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        local_logits = torch.cat([out["preds"] for out in val_outputs]).to(device)
-        # local_ids    = torch.cat([out[key]   for out in val_outputs]).to(device)
-        local_ids    = torch.cat([out["sequence_id"] for out in val_outputs]).to(device)
+            # Local tensors
+            key = cfg.get("PRIMARY_KEY", "RINPERSOON")
+            # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # local_logits = torch.cat([out["preds"] for out in val_outputs]).to(device)
+            # local_ids    = torch.cat([out[key] for out in val_outputs]).to(device)
+            local_logits = torch.cat([out["preds"] for out in outs]).float()
+            local_ids    = torch.cat([out[key] for out in outs]).cpu().numpy()
 
-        # Gather across ranks
-        g_logits = trainer.strategy.all_gather(local_logits)
-        g_ids    = trainer.strategy.all_gather(local_ids)
+            # Gather across ranks: commented out in v1
+            # g_logits = trainer.strategy.all_gather(local_logits)
+            # g_ids    = trainer.strategy.all_gather(local_ids)
 
-        # Flatten gathered tensors
-        if g_logits.dim() == 2:  # (world, N)
-            logits_all = g_logits.flatten(0, 1).cpu()
-            ids_all    = g_ids.flatten(0, 1).cpu().numpy()
-        else:
-            logits_all = g_logits.cpu()
-            ids_all    = g_ids.cpu().numpy()
+            # Flatten gathered tensors
+            # if g_logits.dim() == 2:  # (world, N)
+            #     logits_all = g_logits.flatten(0, 1).cpu()
+            #     ids_all    = g_ids.flatten(0, 1).cpu().numpy()
+            # else:
+            #     logits_all = g_logits.cpu()
+            #     ids_all    = g_ids.cpu().numpy()
 
-        # Convert logits -> probabilities
-        if logits_all.ndim == 2 and logits_all.size(1) == 2:
-            prob_all = torch.softmax(logits_all, dim=1)[:, 1]
-        else:
-            prob_all = torch.sigmoid(logits_all.squeeze())
+            # Convert logits -> probabilities
+            # if logits_all.ndim == 2 and logits_all.size(1) == 2:
+            #     prob_all = torch.softmax(logits_all, dim=1)[:, 1]
+            # else:
+            #     prob_all = torch.sigmoid(logits_all.squeeze())
 
-        # Only global zero does I/O + threshold writeback
-        if trainer.is_global_zero:
+            if local_logits.ndim == 2 and local_logits.size(1) == 2:
+                prob_all = torch.softmax(local_logits, dim=1)[:, 1]
+            else:
+                prob_all = torch.sigmoid(local_logits.squeeze())
+
+            # Only global zero does I/O + threshold writeback
+            # if trainer.is_global_zero: # moved up in v1
             val_ids_df = _read_any(cfg['val_path'])
+            # y_series = (
+            #     pd.DataFrame({key: ids_all})
+            #     .merge(val_ids_df[[key, target_col]], on=key, how="left", validate="m:1")[target_col]
+            # )
             y_series = (
-                pd.DataFrame({key: ids_all})
+                pd.DataFrame({key: local_ids})
                 .merge(val_ids_df[[key, target_col]], on=key, how="left", validate="m:1")[target_col]
             )
             y_val = torch.from_numpy(y_series.to_numpy().astype(int))
@@ -332,10 +347,7 @@ def _train_one_target(cfg, target_col, target_type, num_outputs):
             best_thr_t, _ = _best_f1_threshold_torch(prob_all, y_val)
 
             raw = torch.load(best_ckpt, map_location='cpu')
-            if "state_dict" in raw:
-                raw["state_dict"]["best_thr"] = best_thr_t.detach().cpu()
-            else:
-                raw["best_thr"] = best_thr_t.detach().cpu()
+            raw["best_thr"] = best_thr_t.detach().cpu()
             torch.save(raw, best_ckpt)
             logging.info(f"Saved best_thr = {float(best_thr_t):.6f} to {best_ckpt}")
 

@@ -25,7 +25,6 @@ class Embeddings(nn.Module):
         self.abspos = PositionalEmbedding(1, hparams.hidden_size, torch.sin)
         self.segment = nn.Embedding(4, hparams.hidden_size, padding_idx=0)
 
-        #### TOKENS
         nn.init.uniform_(self.token.weight, a=-d, b=d)
         nn.init.uniform_(self.segment.weight, a=-d, b=d)
         
@@ -41,6 +40,10 @@ class Embeddings(nn.Module):
         self.res_seg = ReZero(hparams.hidden_size, simple=True, fill=0)
         self.dropout = nn.Dropout(hparams.emb_dropout)
 
+        # Add these lines for experiment flags (default: False)
+        self.no_age_emb = getattr(hparams, "no_age_emb", False)
+        self.no_date_emb = getattr(hparams, "no_date_emb", False)
+
     def parametrize(self, norm: bool = False):
         """Remove Mean from the Embedding Matrix (on each forward pass"""
         ignore_index = torch.LongTensor([0,4,5,6,7,8])
@@ -51,14 +54,17 @@ class Embeddings(nn.Module):
 
 
     def forward(self, tokens, position, age, segment):
-        """"""
         tokens = self.token(tokens)
 
         pos = self.age(age.float().unsqueeze(-1))
+        if self.no_age_emb:
+            pos.zero_()
         pos[:, :5] *= 0
         tokens = self.res_age(tokens, pos)
 
         pos = self.abspos(position.float().unsqueeze(-1))
+        if self.no_date_emb:
+            pos.zero_()
         pos[:, :5] *= 0
         tokens = self.res_abs(tokens, pos)
 
