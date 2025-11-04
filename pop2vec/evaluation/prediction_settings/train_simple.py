@@ -456,7 +456,11 @@ def _train_target(
         for xb, yb in train_loader:
             optimizer.zero_grad()
             logits = model(xb)
-            loss = criterion(logits.squeeze() if target_type != "categorical" else logits, yb)
+            # Ensure matching shapes per task type
+            if target_type == "categorical":
+                loss = criterion(logits, yb)
+            else:  # numeric or binary: expect (B,) vs (B,)
+                loss = criterion(logits.reshape(-1), yb.reshape(-1))
             loss.backward()
             optimizer.step()
 
@@ -480,7 +484,7 @@ def _train_target(
         with torch.no_grad():
             val_logits_np = model(X_val_t).cpu().numpy()
             if target_type == "numeric" or (target_type == "binary"):
-                val_logits_np = val_logits_np.squeeze()
+                val_logits_np = val_logits_np.reshape(-1)
         val_metric = _monitor(y_val, val_logits_np)
 
         epoch_bar.set_postfix(
@@ -502,7 +506,7 @@ def _train_target(
     with torch.no_grad():
         logits_all = model(X_val_t).cpu().numpy()
         if target_type == "numeric" or (target_type == "binary"):
-            logits_all = logits_all.squeeze()
+            logits_all = logits_all.reshape(-1)
     
     val_metrics = (
         _regression_metrics(y_val, logits_all)
@@ -556,7 +560,7 @@ def _eval_test(
     with torch.no_grad():
         logits = model(X_t).cpu().numpy()
         if target_type in ["numeric", "binary"]:
-            logits = logits.squeeze()
+            logits = logits.reshape(-1)
 
     return (
         _regression_metrics(y, logits)
