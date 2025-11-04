@@ -464,10 +464,11 @@ def _train_target(
 
             # ---- save batch outputs for epoch‑level train metric ----
             if target_type in ("numeric", "binary"):
-                epoch_logits.append(logits.detach().cpu().numpy().squeeze())  # (B,)
+                # Use flatten() to keep 1D even for batch_size=1
+                epoch_logits.append(logits.detach().cpu().numpy().flatten())  # (B,)
             else:  # categorical
                 epoch_logits.append(logits.detach().cpu().numpy())            # (B,K)
-            epoch_targets.append(yb.detach().cpu().numpy())
+            epoch_targets.append(yb.detach().cpu().numpy().flatten() if target_type in ("numeric", "binary") else yb.detach().cpu().numpy())
                 
         # ---- compute epoch training monitor from accumulated batches ----
         train_logits_np = np.concatenate(epoch_logits, axis=0)

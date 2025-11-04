@@ -1,0 +1,41 @@
+{
+    "task_file": "preFer",
+    "target_column": {
+        "children_post2021": [
+            "binary",
+            2
+        ]
+    },
+    "train_path": "",
+    "valid_path": "",
+    "sequence_encoded": "",
+    "model_name": "",
+    "LR": 2e-05,
+    "BATCH_SIZE": 8,
+    "results_dir": "",
+    "model_save_dir": "",
+    "pretrained_model_path": "",
+    "pretrained_model_hparams": "",
+    "EARLY_STOP_PATIENCE": 2,
+    "MAX_EPOCHS": 4,
+    "balance_dataset": true,
+    "test_only": false,
+    "devices": 4,
+    "freeze_positions": false,
+    "pooled": true,
+    "class-balanced-loss": false,
+    "accelarator": "gpu",
+    "ddpstrategy": "auto",
+    "accumulate_grad_batches": 4,
+    "gradient_clip_val": 1,
+    "training_precision": "bf16",
+    "val_check_interval": 1.0,
+    "weight_decay_enc": 0.01,
+    "layer_lr_decay": 0.95,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "epsilon": 1e-06,
+    "optimizer_type": "adamw",
+    "lr_scheduler": "onecycle",
+    "result_path": ""
+}
