@@ -1,14 +1,15 @@
+
 import json
 import logging
-import os
 import sys
-import numpy as np
+import os
 import pandas as pd
 from pathlib import Path
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from pop2vec.llm.src.new_code.load_data import CustomLazyHDFSDataset
+from pop2vec.llm.src.new_code.load_data import CustomLazyHDF5Dataset
 from pop2vec.llm.src.new_code.pipeline import write_to_hdf5
 from pop2vec.llm.src.new_code.utils import read_json
 from pop2vec.llm.src.transformer.models import TransformerEncoder
@@ -28,7 +29,7 @@ DEFAULT_VALS = {
     "needed_ids_path": None,
 }
 
-# helper: hparam integrity / update
+# ──────────────────── helper: hparam integrity / update ───────────────
 def _integrity_check(cfg):
     missing = [k for k in REQ_KEYS if k not in cfg]
     if missing:
@@ -39,16 +40,19 @@ def _with_defaults(cfg):
         cfg.setdefault(k, v)
     return cfg
 
+
+
 def load_model(checkpoint_path):
     model = TransformerEncoder.load_from_checkpoint(
-        checkpoint_path,
-        # Assuming you trained with a recent version of PyTorch-Lightning and
-        # you used self.save_hyperparameters(hparams) in your __init__
-        # (which you did), Lightning will store all of your hparams in the
-        # checkpoint and automatically pass them back into your constructor
+        checkpoint_path, 
+        # assuming you trained with a recent version of PyTorch-Lightning and 
+        # you called self.save_hyperparameters(hparams) in your __init__ 
+        # (which you did), Lightning will store all of your hparams in the 
+        # checkpoint and automatically pass them back into your constructor 
         # when you call load_from_checkpoint. So no need to pass hparams separately
+
+        # hparams=read_hparams(hparams_path) 
     )
-    # hparams=read_hparams(hparams_path)
     model = model.transformer
     model.eval()
     default_device = str(next(model.parameters()).device)
@@ -56,20 +60,24 @@ def load_model(checkpoint_path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     logging.info(f"Moved model to {device} by force!")
-
+    
     return model
 
+
 def log_dataset_stuff(dataset):
-    logging.info(f"Length of dataset {len(dataset)}")
-    logging.info(f"Type of dataset {type(dataset)}")
+    logging.info(f"length of dataset {len(dataset)}")
+    logging.info(f"type of dataset {type(dataset)}")
     sample0 = dataset[0]
     logging.info(f"input_ids shape = {sample0['input_ids'].shape}")
     if 'original_sequence' in sample0:
         logging.info(f"original sequence shape = {sample0['original_sequence'].shape}")
 
+    
+
 def dump_embeddings(path, embeddings_dict):
     with open(path, "w") as json_file:
         json.dump(embeddings_dict, json_file)
+
 
 def inference(cfg, transform_to_parquet=True):
     """Run inference on trained model.
@@ -82,7 +90,7 @@ def inference(cfg, transform_to_parquet=True):
     Notes:
        Embeddings are always stored in hdf5. If a file with the same name exists already, it
        is replaced. If parquet files are created, they are stored in a new folder with the
-       name from `cfg["EMB_WRITE_PATH"]` (without the suffix). Moreover, storing
+       name from `cfg["emb_write_path"]` (without the suffix). Moreover, storing
        in parquet requires loading the full set of embeddings into memory, which can
        require a lot of memory. In some situations, it might thus be better to
        do the transformation to parquet in a separate step -- for instance when multiple
@@ -90,31 +98,31 @@ def inference(cfg, transform_to_parquet=True):
     """
     write_path = cfg["emb_write_path"]
     tokenized_path = cfg["tokenized_path"]
-    model = load_model(cfg["checkpoint_path"])
-    save_token_embs = cfg["save_token_embs"]
-    logging.info(f"Reading from tokenized path: %s", tokenized_path)
+    model = load_model(cfg['checkpoint_path'])
+    save_token_embs = cfg['save_token_embs']
+    logging.info("Reading from tokenized path: %s", tokenized_path)
 
-    if cfg["needed_ids_path"]:
+    if cfg['needed_ids_path']:
         needed_id_set = set(
-            pd.read_parquet(cfg["needed_ids_path"])["RINPERSOON"].tolist()
+            pd.read_parquet(cfg['needed_ids_path'])['RINPERSOON'].tolist()
         )
     else:
         needed_id_set = None
 
-    dataset = CustomLazyHDFSDataset(
+    dataset = CustomLazyHDF5Dataset(
         tokenized_path,
         validation=False,
         inference=True,
-        mlm_encoded=False,
+        mlm_encoded=False,              
         num_val_items=0,
         needed_id_set=needed_id_set
     )
     log_dataset_stuff(dataset)
     # dataset.set_mlm_encoded(False)
     dataloader = DataLoader(
-        dataset,
-        batch_size=cfg['batch_size'],
-        num_workers=max(1, int(os.sched_getaffinity(0)) - 1)
+        dataset, 
+        batch_size=cfg['batch_size'], 
+        num_workers=max(1, len(os.sched_getaffinity(0)) - 1)
     )
 
     for i, batch in enumerate(tqdm(dataloader, desc="Inferring by batch")):
@@ -130,16 +138,16 @@ def inference(cfg, transform_to_parquet=True):
         if i % 100 == 0:
             logging.info(f"printing for batch {i}:")
             logging.info(f"len(outputs) = {len(outputs)}")
-            logging.info(f"batch_length = {len(batch['sequence_id'])}")
+            logging.info(f"batch length = {len(batch['sequence_id'])}")
 
         sequence_id = batch["sequence_id"]
         # cls_emb = outputs[:, 0, :].cpu()
-
+        
         padding_mask = batch["padding_mask"].bool()  # Convert to boolean mask
         valid_token_counts = padding_mask.sum(dim=1, keepdim=True)  # Count non-padding tokens
         valid_token_counts = valid_token_counts.clamp(min=1)  # Avoid division by zero
         mean_emb = (outputs * padding_mask.unsqueeze(-1)).sum(dim=1) / valid_token_counts
-        # mean_emb = mean_emb.cpu()
+        mean_emb = mean_emb.cpu()
 
         data_dict = {"sequence_id": sequence_id, "mean_emb": mean_emb}
         if save_token_embs:
@@ -177,7 +185,7 @@ if __name__ == "__main__":
         format="%(asctime)s %(name)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.DEBUG
     )
     CFG_PATH = sys.argv[1]
-    logging.info(f"CFG_PATH: {CFG_PATH}")
+    logging.info(CFG_PATH)
     cfg = load_cfg(CFG_PATH)
     os.makedirs(os.path.dirname(cfg['emb_write_path']), exist_ok=False)
 

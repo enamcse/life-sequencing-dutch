@@ -437,7 +437,7 @@ class CustomLazyHDF5Dataset(Dataset):
         num_val_items: Optional[int] = None,
         val_split: float = 0.10,
         mlm_encoded: bool = True,
-        return_index: Optional[bool] = False,
+        return_index: Optional[bool] = None,
         inference: bool = False,
         needed_id_set = None,
     ) -> None:
@@ -497,7 +497,7 @@ class CustomLazyHDF5Dataset(Dataset):
     ) -> np.ndarray:
         """determine which rows of the HDF5 we need *and* only keep those."""
         with h5py.File(self.file_path, "r") as h5:
-            n_items = len(h5["sequence_ids"])
+            n_items = len(h5["sequence_id"])
             n_val = int(n_items * val_split) if num_val_items is None else num_val_items
 
             # 1) choose the coarse split (train/val/test)
@@ -627,7 +627,7 @@ class FineTuneLazyDataset(Dataset):
         val_split: float=0.1,
         return_sequence_id: bool=False,  # Whether to return the sequence_id
         task_type: str='binary',  # 'binary' or 'regression'
-        assign_weight: bool=False,  # Optional dict mapping label -> weight
+        assign_weights: bool=False,  # Optional dict mapping label -> weight
         primary_key: str='RINPERSOON',  # Column name for unique ID in label file
     ):
         """
@@ -648,7 +648,7 @@ class FineTuneLazyDataset(Dataset):
         self.phase = phase
         self.return_sequence_id = return_sequence_id
         self.task_type = task_type
-        self.assign_weight = assign_weight
+        self.assign_weights = assign_weights
 
         # 1) Read the label file (CSV or Parquet)
         self.label_df = self._load_label_file(self.train_file_path, primary_key)
@@ -663,7 +663,7 @@ class FineTuneLazyDataset(Dataset):
             self.labels_tensor = None
         elif self.task_type in [ 'categorical','binary', 'ordinal']:
             self.labels_tensor = torch.tensor(self._labels, dtype=torch.long)
-            if self.assign_weight:
+            if self.assign_weights:
                 counts = Counter(self.labels_tensor.tolist())
                 weights = [1.0 / counts[int(label)] for label in self.labels_tensor]
                 self.sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)

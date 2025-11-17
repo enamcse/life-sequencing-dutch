@@ -1,0 +1,43 @@
+{
+    "task_file": "twin",
+    "target_column": {
+        "is_twin": [
+            "binary",
+            2
+        ]
+    },
+    "PRIMARY_KEY": "RINPERSOON1",
+    "PARTNER_KEY": "RINPERSOON2",
+    "train_path": "/projects/0/prjs1589/stonybrook/llm/data/train/twin.parquet",
+    "val_path": "/projects/0/prjs1589/stonybrook/llm/data/val/twin.parquet",
+    "sequence_encoded": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/dryrun_encoded.h5",
+    "model_name": "small",
+    "LR": 2e-05,
+    "BATCH_SIZE": 8,
+    "result_dir": "/projects/0/prjs1589/stonybrook/evaluation/results/lr2e-05_bs8_is_twin/",
+    "model_save_dir": "/projects/0/prjs1589/stonybrook/evaluation/models/lr2e-05_bs8_is_twin/",
+    "pretrained_model_path": "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_20251111/model-epoch=00-step=137-val_loss_track=6.00.ckpt",
+    "pretrained_model_hparams": "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_20251111/lightning_logs/version_0/hparams.yaml",
+    "EARLY_STOP_PATIENCE": 2,
+    "MAX_EPOCHS": 4,
+    "balance_dataset": true,
+    "test_only": false,
+    "devices": 1,
+    "freeze_positions": false,
+    "pooled": true,
+    "class-balanced-loss": false,
+    "accelerator": "gpu",
+    "ddpstrategy": "auto",
+    "accumulate_grad_batches": 1,
+    "gradient_clip_val": 1,
+    "training_precision": "bf16",
+    "val_check_interval": 1.0,
+    "weight_decay_enc": 0.01,
+    "layer_lr_decay": 0.95,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "epsilon": 1e-06,
+    "optimizer_type": "adamw",
+    "lr_scheduler": "onecycle",
+    "result_path": "/projects/0/prjs1589/stonybrook/evaluation/results/lr2e-05_bs8_is_twin/twin.csv"
+}

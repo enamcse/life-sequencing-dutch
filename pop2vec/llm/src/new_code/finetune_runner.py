@@ -299,7 +299,7 @@ def _train_one_target(cfg, target_col, target_type, num_outputs):
             # Distributed predict on ALL ranks
             outs = single.predict(val_model, val_dl, return_predictions=True) # Changed in v1
             # val_outputs = trainer.predict(val_model, val_dl, return_predictions=True)
-
+            logging.info(f"outs length = {len(outs)}, outs[0] keys = {outs[0].keys()}")
             # Local tensors
             key = cfg.get("PRIMARY_KEY", "RINPERSOON")
             # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

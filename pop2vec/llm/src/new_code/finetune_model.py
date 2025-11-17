@@ -369,7 +369,7 @@ class TransformerFT(pl.LightningModule):
         )
         return {
             "preds": preds.detach(),           # (B, …)
-            "RINPERSOON": batch["sequence_id"],   # (B,)
+            self.hparams.get("PRIMARY_KEY","RINPERSOON"): batch["sequence_id"],   # (B,)
         }
 
     def training_step(self, batch, batch_idx):
