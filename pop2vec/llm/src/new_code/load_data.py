@@ -12,6 +12,7 @@ import os
 import numpy as np
 
 import pandas as pd
+from torch.nn.utils.rnn import pad_sequence
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -20,6 +21,85 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# --- ADD utilities at module level ---
+def _truncate_at_death(stream_tokens_1d: torch.Tensor, death_id: int = None) -> int:
+    """Return last index to KEEP (inclusive). If DEATH not present, keep full length."""
+    # stream_tokens_1d: shape (L,)
+    if death_id is None:
+        return stream_tokens_1d.numel() - 1
+    where = (stream_tokens_1d == death_id).nonzero(as_tuple=False)
+    if where.numel() == 0:
+        return stream_tokens_1d.numel() - 1
+    return int(where[0].item())  # first Death position
+
+def collate_autoreg(batch, pad_id: int, death_id: int = None):
+    """
+    batch: list of dicts from your dataset with keys:
+        - "input_ids": torch.LongTensor of shape (4, L)
+        - "padding_mask": torch.BoolTensor or LongTensor of shape (L)  (1=real,0=pad)
+        - ... other keys OK and are ignored
+    Returns dict with:
+        - input_ids: (B, 4, Lp) prefix, padded
+        - padding_mask: (B, Lp) for the prefix
+        - targets: (B, Lp) next-token labels (stream 0 shifted), padded with pad_id
+    """
+    x_prefix_list  = []
+    pad_prefix_list = []
+    y_targets_list = []
+
+    for item in batch:
+        x4 = item["input_ids"]        # (4, L)
+        pm = item["padding_mask"]     # (L,)
+
+        # 1) crop to real tokens only (strip right padding)
+        L_real = int(pm.sum().item())
+        x4 = x4[:, :L_real]           # (4, L_real)
+
+        # 2) truncate at first Death (inclusive) for TRAINING semantics
+        #    (we use stream 0 = tokens to find Death)
+        keep_upto = _truncate_at_death(x4[0], death_id)
+        x4 = x4[:, :keep_upto+1]      # (4, L_keep)
+        if x4.size(1) < 2:
+            # nothing to learn if length < 2 after truncation; keep minimal 2 by skipping
+            # you could also drop this sample entirely depending on your pipeline
+            # here we just skip by continuing
+            continue
+
+        # 3) build prefix and shifted target
+        x_prefix = x4[:, :-1]         # (4, Lp)
+        y_next   = x4[0, 1:]          # (Lp,)
+
+        # 4) padding mask for the prefix (all real)
+        pad_prefix = torch.ones(x_prefix.size(1), dtype=torch.long, device=x_prefix.device)  # (Lp,)
+
+        x_prefix_list.append(x_prefix.T)   # to shape (Lp, 4) for pad_sequence convenience
+        pad_prefix_list.append(pad_prefix)
+        y_targets_list.append(y_next)
+
+    if len(x_prefix_list) == 0:
+        # Fallback: create a dummy tiny batch so training loop won't crash
+        dummy = torch.tensor([[pad_id]], dtype=torch.long)
+        return {
+            "input_ids":     dummy.unsqueeze(0).unsqueeze(0).repeat(1,4,1),  # (1,4,1)
+            "padding_mask":  torch.ones(1,1, dtype=torch.long),
+            "targets":       torch.full((1,1), pad_id, dtype=torch.long),
+        }
+
+    # 5) pad to max Lp across batch
+    #    We padded as (Lp,4) so we can use pad_sequence along time dim.
+    x_padded   = pad_sequence(x_prefix_list, batch_first=True, padding_value=pad_id)   # (B, Lp_max, 4)
+    pad_padded = pad_sequence(pad_prefix_list, batch_first=True, padding_value=0)      # (B, Lp_max)
+    y_padded   = pad_sequence(y_targets_list, batch_first=True, padding_value=pad_id)  # (B, Lp_max)
+
+    # 6) back to (B, 4, Lp_max)
+    x_padded = x_padded.transpose(1, 2).contiguous()  # (B,4,Lp)
+
+    return {
+        "input_ids": x_padded.long(),
+        "padding_mask": pad_padded.long(),
+        "targets": y_padded.long(),
+    }
 
 class CustomIterableDataset(IterableDataset):
     def __init__(self, file_path, validation, num_val_items=None, val_split=0.1, mlm_encoded=True, inference=False):

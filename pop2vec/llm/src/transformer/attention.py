@@ -39,15 +39,17 @@ class MultiHeadAttention(nn.Module):
                 print("Could not find dropout_attention parameter")
                 dropout=1e-3
 
+            self.causal = bool(getattr(hparams, "causal_attn", False))
+
             self.attention = CustomSelfAttention(
                 dim=hparams.hidden_size,
-                heads=self.head_num,
+                heads=hparams.n_heads,
                 nb_features=hparams.num_random_features,
-                dim_head=hparams.hidden_size // self.head_num,
-                causal=False,
+                dim_head=hparams.hidden_size // hparams.n_heads,
+                causal=self.causal,              # << enable only for AR runs
                 generalized_attention=False,
                 no_projection=False,
-                dropout=dropout,
+                dropout=getattr(hparams, "att_dropout", 1e-3),
                 local_heads=hparams.n_local,
                 qkv_bias=False,
                 attn_out_bias=True,

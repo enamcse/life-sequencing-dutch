@@ -444,6 +444,28 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
         c["load_model_path"], task_type=ttype, pretrained_model_path='RANDOM'
     )
 
+    # Clean up hyperparameters to avoid TensorBoard issues
+    if hasattr(model, 'hparams'):
+        # Remove potentially problematic hyperparameters that TensorBoard can't handle
+        problematic_keys = []
+        for key, value in model.hparams.items():
+            try:
+                # Test if the value can be converted to a format TensorBoard accepts
+                if isinstance(value, (dict, list, tuple)) and len(str(value)) > 1000:
+                    problematic_keys.append(key)
+                elif hasattr(value, 'shape') and len(value.shape) > 2:  # Multi-dimensional tensors
+                    problematic_keys.append(key) 
+                elif isinstance(value, torch.Tensor) and value.numel() > 100:  # Large tensors
+                    problematic_keys.append(key)
+            except Exception:
+                problematic_keys.append(key)
+        
+        # Remove problematic hyperparameters
+        for key in problematic_keys:
+            if key in model.hparams:
+                logging.info(f"Removing problematic hyperparameter for logging: {key}")
+                delattr(model.hparams, key)
+
     thr_from_ckpt = None
 
     if hasattr(model, "best_thr"):
@@ -475,6 +497,7 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
         strategy=strategy,
         accelerator=c["accelerator"],
         devices=c["devices"],
+        logger=False,# Re-enable logging now that we've cleaned the hyperparameters
     )
 
     _ddp_log("after load_from_checkpoint + trainer init")
@@ -527,65 +550,112 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
         return
 
     test_metrics = None
+    
+    # --- Common setup for metrics calculation ---
+    try:
+        key = c.get("PRIMARY_KEY", "RINPERSOON")
+        labels_df = _read_any(c.get("test_path", '/gpfs/ostor/ossc9424/data/PreFer/sample_size_exp/dataset/test/final_leaderboard_outcome.parquet'))
 
-    if ttype == "binary":
-        probs = _logits_to_pos_proba(preds, target_type="binary", num_out=2)  # (N,)
-        # lbls  = (probs >= c["binary_threshold"]).astype(int)
-        lbls  = (probs >= thr_from_ckpt).astype(int)
+        if key in labels_df.columns and tgt in labels_df.columns:
+            lbls_series = (
+                pd.DataFrame({key: ids})
+                .merge(labels_df[[key, tgt]], on=key, how="left", validate="m:1")[tgt]
+            )
+            y_true = lbls_series.to_numpy()
+            
+            mask = ~pd.isna(y_true)
+            if mask.any():
+                y_true_m = y_true[mask]
+                preds_m = preds[mask]
 
-        try:
-            key = c.get("PRIMARY_KEY", "RINPERSOON")
-            labels_df = _read_any(c.get("test_path", '/gpfs/ostor/ossc9424/data/PreFer/sample_size_exp/dataset/test/final_leaderboard_outcome.parquet'))
-
-            if key in labels_df.columns and tgt in labels_df.columns:
-                lbls_series = (
-                    pd.DataFrame({key: ids})
-                    .merge(labels_df[[key, tgt]], on=key, how="left", validate="m:1")[tgt]
-                )
-                y_true = lbls_series.to_numpy().astype(int)
-
-                mask = ~pd.isna(y_true)
-                if mask.any():
-                    y_true_m = y_true[mask].astype(int)
-                    probs_m  = probs[mask]
-                    # preds_m   = (probs_m >= c.get("binary_threshold", 0.5)).astype(int)
-                    preds_m   = (probs_m >= thr_from_ckpt).astype(int)
+                if ttype == "binary":
+                    probs_m = _logits_to_pos_proba(preds_m, target_type="binary", num_out=2)
+                    pred_lbls_m = (probs_m >= thr_from_ckpt).astype(int)
+                    y_true_m = y_true_m.astype(int)
                     test_metrics = {
-                        "acc": accuracy_score(y_true_m, preds_m),
-                        "f1": f1_score(y_true_m, preds_m, average="binary"),
+                        "acc": accuracy_score(y_true_m, pred_lbls_m),
+                        "f1": f1_score(y_true_m, pred_lbls_m, average="binary"),
                         "auc": roc_auc_score(y_true_m, probs_m),
-                        "mcc": matthews_corrcoef(y_true_m, preds_m),
-                        "mae": "",
-                        "r2": "",
+                        "mcc": matthews_corrcoef(y_true_m, pred_lbls_m),
+                        "mae": "", "r2": "",
                     }
-                    logging.info("Test metrics: " + ", ".join(f"{k}={v:.4f}" for k, v in test_metrics.items()))
-                else:
-                    logging.warning("No non-NA labels found; skipping test metrics")
-            else:
-                logging.warning(f"Key columns not found in labels_df: {key}, {tgt}")
-        except Exception as e:
-            logging.warning(f"Could not compute test metrics: {e}")
 
-        # delete it if you comfortable
+                elif ttype == "categorical":
+                    pred_indices = np.argmax(preds_m, axis=1)
+                    y_true_m = y_true_m.astype(int)
+                    if np.min(y_true_m) == 1:
+                        y_true_m -= 1
+                    
+                    probas_m = torch.softmax(torch.from_numpy(preds_m), dim=1).numpy()
+                    test_metrics = {
+                        "acc": accuracy_score(y_true_m, pred_indices),
+                        "f1": f1_score(y_true_m, pred_indices, average="macro"),
+                        "auc": roc_auc_score(y_true_m, probas_m, average="macro", multi_class="ovr"),
+                        "mcc": matthews_corrcoef(y_true_m, pred_indices),
+                        "mae": "", "r2": "",
+                    }
+
+                elif ttype == "numeric":
+                    y_true_m = y_true_m.astype(float)
+                    preds_m = preds_m.astype(float).flatten()
+                    
+                    # --- Un-normalize predictions ---
+                    # The model was trained on normalized labels (z-score).
+                    # We must un-normalize its predictions before comparing to true labels.
+                    mu = model.hparams.get("mu", 0.0)
+                    sigma = model.hparams.get("sigma", 1.0)
+                    
+                    # Convert tensors to floats for numpy operations
+                    if hasattr(mu, 'item'):
+                        mu = mu.item()
+                    if hasattr(sigma, 'item'):
+                        sigma = sigma.item()
+
+                    if sigma == 0: sigma = 1.0 # Avoid division by zero
+                    
+                    preds_unnormalized = (preds_m * sigma) + mu
+                    
+                    logging.info(f"Un-normalizing numeric predictions with mu={mu:.4f}, sigma={sigma:.4f}")
+
+                    test_metrics = {
+                        "acc": "", "f1": "", "auc": "", "mcc": "",
+                        "mae": np.mean(np.abs(y_true_m - preds_unnormalized)),
+                        "r2": r2_score(y_true_m, preds_unnormalized),
+                    }
+                    # Also un-normalize the full `preds` array for saving
+                    preds = (preds.astype(float).flatten() * sigma) + mu
+
+                if test_metrics:
+                    logging.info("Test metrics: " + ", ".join(f"{k}={v:.4f}" for k, v in test_metrics.items() if v != ""))
+            else:
+                logging.warning("No non-NA labels found; skipping test metrics")
+        else:
+            logging.warning(f"Key columns not found in labels_df: {key}, {tgt}")
+    except Exception as e:
+        logging.warning(f"Could not compute test metrics: {e}", exc_info=True)
+
+    # --- Prepare output file ---
+    if ttype == "binary":
+        probs = _logits_to_pos_proba(preds, target_type="binary", num_out=2)
+        lbls  = (probs >= thr_from_ckpt).astype(int)
         if not (len(ids) == len(probs) == len(lbls)):
             raise ValueError(f"Length mismatch: ids={len(ids)} probs={len(probs)} lbls={len(lbls)}")
-
         arr  = np.c_[ids, probs, lbls]
         hdr  = "RINPERSOON,probability,prediction"
-
     else:
         if ttype == "categorical":
             preds = np.asarray(preds).argmax(1) + 1  # 1-based labels
-        else:
+        else: # numeric - already un-normalized
             preds = np.asarray(preds)
+        
         ids   = np.asarray(ids).reshape(-1)
         preds = preds.reshape(-1)
 
         if len(ids) != len(preds):
             raise ValueError(f"Length mismatch: ids={len(ids)} preds={len(preds)}")
-
         arr = np.c_[ids, preds]
         hdr = "RINPERSOON,prediction"
+
     if c.get("save_predictions", None):
         out = Path(c["result_dir"], f"{c['task_file']}_{tgt}.csv")
         np.savetxt(out, arr, delimiter=",", header=hdr, comments="", fmt="%s")

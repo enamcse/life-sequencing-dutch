@@ -48,8 +48,32 @@ class TransformerEncoder(pl.LightningModule):
             ## 2.2. LOSS
             self.cls_loss = nn.CrossEntropyLoss(weight=self.cls_a, label_smoothing=0.1)
             self.mlm_loss = nn.CrossEntropyLoss(ignore_index = 0)
+        elif self.task == "ar_lm":
+            self.vocab_size  = int(self.hparams.vocab_size)
+            self.hidden_size = int(self.hparams.hidden_size)
+            self.num_outputs = self.vocab_size  # keep parity with MLM
+
+            # LM head (no bias)
+            self.lm_head = torch.nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+
+            # Sanity: hidden size must match embedding dim
+            emb = self.transformer.embedding.token  # nn.Embedding (possibly parametrized)
+            assert getattr(emb, "embedding_dim", self.hidden_size) == self.hidden_size, \
+                f"hidden_size ({self.hidden_size}) != embedding_dim ({getattr(emb,'embedding_dim',None)})"
+
+            # Proper weight tying (works for both parametrized and plain embeddings)
+            if hasattr(emb, "parametrizations") and "weight" in emb.parametrizations:
+                # tie to the *original* Parameter when parametrizations are active
+                self.lm_head.weight = emb.parametrizations.weight.original
+            else:
+                # tie to the plain embedding Parameter
+                self.lm_head.weight = emb.weight
+
+            # Token-level loss; ignore PAD=0 (as per your vocabulary)
+            self.ar_loss = torch.nn.CrossEntropyLoss(ignore_index=0)
+
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"Unknown training_task: {self.task}")
 
         # 3. METRICS
         self.init_metrics()
@@ -177,54 +201,138 @@ class TransformerEncoder(pl.LightningModule):
         
     def forward(self, batch):
         """Forward pass"""
-        ## 1. ENCODER INPUT
-        predicted = self.transformer(
-            x=batch["input_ids"].long(),
-            padding_mask=batch["padding_mask"].long()
-        )
-        ## 2. MASKED LANGUAGE MODEL
-        mlm_pred = self.mlm_decoder(predicted, batch)
-        ## 3. CLS TASK
-        cls_pred  = self.cls_decoder(predicted[:,0])
-        return mlm_pred, cls_pred
+        if "mlm" in self.task:
+            ## 1. ENCODER INPUT
+            predicted = self.transformer(
+                x=batch["input_ids"].long(),
+                padding_mask=batch["padding_mask"].long()
+            )
+            ## 2. MASKED LANGUAGE MODEL
+            mlm_pred = self.mlm_decoder(predicted, batch)
+            ## 3. CLS TASK
+            cls_pred  = self.cls_decoder(predicted[:,0])
+            return mlm_pred, cls_pred
+        elif self.task == "ar_lm":
+            hidden = self.transformer(
+                x=batch["input_ids"].long(),         # (B,4,Lp)
+                padding_mask=batch["padding_mask"].long(),  # (B,Lp)
+            )  # -> (B,Lp,H)
+            logits = self.lm_head(hidden)            # (B,Lp,V)
+            return logits
 
     def training_step(self, batch, batch_idx):
         """Training Iteration"""
-        ## 1. ENCODER-DECODER
-        mlm_preds, cls_preds = self(batch)
-        ## 2. LOSS
-        mlm_targs = batch["target_tokens"].long()
-        cls_targs = batch["target_cls"].long()
-        mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
-        cls_loss = self.cls_loss(cls_preds, target = cls_targs)
+        if "mlm" in self.task:
+            ## 1. ENCODER-DECODER
+            mlm_preds, cls_preds = self(batch)
+            ## 2. LOSS
+            mlm_targs = batch["target_tokens"].long()
+            cls_targs = batch["target_cls"].long()
+            mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
+            cls_loss = self.cls_loss(cls_preds, target = cls_targs)
 
-        self.log("train/loss_mlm", mlm_loss.detach(), on_step=True, on_epoch=True)
-        self.log(
-            "lr", 
-            self.optimizers().param_groups[0]['lr'], 
-            on_step=True, 
-            on_epoch=True
-        )
-        self.log("train/loss_cls", cls_loss.detach(), on_step=True, on_epoch=True)
+            self.log("train/loss_mlm_step", mlm_loss.detach(), on_step=True, on_epoch=False, sync_dist=False)
+            self.log("train/loss_mlm_epoch", mlm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
 
-        loss = self.cls_w * cls_loss + self.mlm_w * mlm_loss
-
-        self.log("train/loss_combined", loss.detach(), on_step=True, on_epoch=True)
-        ## 3. METRICS
-        if (self.global_step + 1) % (self.trainer.log_every_n_steps) == 0:
-            self.log_metrics(
-                predictions=(mlm_preds.detach(), cls_preds.detach()),
-                targets=(mlm_targs.detach(),  cls_targs.detach()),
-                loss=loss.detach(),
-                mlm_loss=mlm_loss.detach(),
-                stage="train",
-                on_step=True,
-                on_epoch=True,
+            self.log(
+                "lr_step", 
+                self.optimizers().param_groups[0]['lr'], 
+                on_step=True, 
+                on_epoch=False,
+                sync_dist=False
             )
-        self.total_train_loss += loss.item()  # Accumulate the total loss
-        self.total_mlm_loss += mlm_loss.item()
-        self.total_cls_loss += cls_loss.item()
-        return loss
+
+            self.log(
+                "lr_epoch", 
+                self.optimizers().param_groups[0]['lr'], 
+                on_step=False, 
+                on_epoch=True,
+                sync_dist=True
+            )
+            self.log("train/loss_cls_step", cls_loss.detach(), on_step=True, on_epoch=False, sync_dist=False)
+            self.log("train/loss_cls_epoch", cls_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+
+            loss = self.cls_w * cls_loss + self.mlm_w * mlm_loss
+
+            self.log("train/loss_combined_step", loss.detach(), on_step=True, on_epoch=False, sync_dist=False, prog_bar=True)
+            self.log("train/loss_combined_epoch", loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            ## 3. METRICS
+            if (self.global_step + 1) % (self.trainer.log_every_n_steps) == 0:
+                self.log_metrics(
+                    predictions=(mlm_preds.detach(), cls_preds.detach()),
+                    targets=(mlm_targs.detach(),  cls_targs.detach()),
+                    loss=loss.detach(),
+                    mlm_loss=mlm_loss.detach(),
+                    stage="train",
+                    on_step=True,
+                    on_epoch=False,
+                    sync_dist=False
+                )
+                self.log_metrics(
+                    predictions=(mlm_preds.detach(), cls_preds.detach()),
+                    targets=(mlm_targs.detach(),  cls_targs.detach()),
+                    loss=loss.detach(),
+                    mlm_loss=mlm_loss.detach(),
+                    stage="train",
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True
+                )
+            self.total_train_loss += loss.item()  # Accumulate the total loss
+            self.total_mlm_loss += mlm_loss.item()
+            self.total_cls_loss += cls_loss.item()
+            return loss
+        elif self.task == "ar_lm":
+            # 1) forward
+            logits = self(batch)                      # (B, Lp, V)
+            targs  = batch["targets"].long()          # (B, Lp)
+
+            # ---- shape sanity check ----
+            assert logits.size(0) == targs.size(0) and logits.size(1) == targs.size(1), \
+                f"AR shapes mismatch: logits {logits.shape} vs targets {targs.shape}"
+            # ----------------------------
+
+            # 2) loss
+            lm_loss = self.ar_loss(logits.permute(0, 2, 1), targs)  # CE expects (B, V, L)
+
+            # 3) logs (match MLM style)
+            self.log("train/loss_lm_step", lm_loss.detach(), on_step=True, on_epoch=False, sync_dist=False, prog_bar=True)
+            self.log("train/loss_lm_epoch", lm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+
+            self.log(
+                "lr_step", 
+                self.optimizers().param_groups[0]['lr'], 
+                on_step=True, 
+                on_epoch=False,
+                sync_dist=False
+            )
+            self.log(
+                "lr_epoch", 
+                self.optimizers().param_groups[0]['lr'], 
+                on_step=False, 
+                on_epoch=True,
+                sync_dist=True
+            )
+
+            # ---- safe perplexity ----
+            ppl_safe = torch.exp(torch.clamp(lm_loss.detach(), max=20))
+            self.log("train/perplexity_step", ppl_safe, on_step=True, on_epoch=False, sync_dist=False)
+            self.log("train/perplexity_epoch", ppl_safe, on_step=False, on_epoch=True, sync_dist=True)
+            # -------------------------
+
+            # 4) step-gated “metrics” hook parity (cheap placeholder)
+            if (self.global_step + 1) % (self.trainer.log_every_n_steps) == 0:
+                # you can add lightweight AR metrics here if you want later
+                # keeping signature parallel to your MLM branch:
+                # self.log_metrics(predictions=logits.detach(), targets=targs.detach(), loss=lm_loss.detach(), stage="train", on_step=True, on_epoch=True)
+                pass
+
+            # 5) accumulators (keep counters consistent with your epoch-end summaries)
+            self.total_train_loss += lm_loss.item()
+            self.total_mlm_loss   += lm_loss.item()     # reuse the same accumulator names
+            # (no CLS loss in AR)
+            return lm_loss
+
 
     def train_epoch_start(self, *args):
         """On Epoch Start"""
@@ -267,59 +375,112 @@ class TransformerEncoder(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         """Validation Step"""
-        ## 1. ENCODER-DECODER
-        mlm_preds, cls_preds = self(batch)
-        ## 2. LOSS
-        mlm_targs = batch["target_tokens"].long()
-        cls_targs = batch["target_cls"].long()
-        mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
-        cls_loss = self.cls_loss(cls_preds, target = cls_targs)
+        if "mlm" in self.task:
+            ## 1. ENCODER-DECODER
+            mlm_preds, cls_preds = self(batch)
+            ## 2. LOSS
+            mlm_targs = batch["target_tokens"].long()
+            cls_targs = batch["target_cls"].long()
+            mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
+            cls_loss = self.cls_loss(cls_preds, target = cls_targs)
 
 
-        
-        loss = self.cls_w * cls_loss + self.mlm_w * mlm_loss
-        self.log("val_loss_track", loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/loss_mlm_epoch", mlm_loss.detach(), on_step=False, on_epoch=True)
-        self.log("val/loss_cls_epoch", cls_loss.detach(), on_step=False, on_epoch=True)
-        
-        ## 3. METRICS
-        self.log_metrics(
-            predictions=(mlm_preds.detach(), cls_preds.detach()),
-            targets=(mlm_targs.detach(),  cls_targs.detach()),
-            loss=loss.detach(),
-            mlm_loss=mlm_loss.detach(),
-            stage="val",
-            on_step=False,
-            on_epoch=True,
-        )
+            
+            loss = self.cls_w * cls_loss + self.mlm_w * mlm_loss
+            self.log("val_loss_track", loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            self.log("val/loss_mlm_epoch", mlm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            self.log("val/loss_cls_epoch", cls_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            
+            ## 3. METRICS
+            self.log_metrics(
+                predictions=(mlm_preds.detach(), cls_preds.detach()),
+                targets=(mlm_targs.detach(),  cls_targs.detach()),
+                loss=loss.detach(),
+                mlm_loss=mlm_loss.detach(),
+                stage="val",
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True
+            )
 
-        self.total_val_loss += loss.item()  # Accumulate the total loss
-        self.total_val_mlm_loss += mlm_loss.item()
-        self.total_val_cls_loss += cls_loss.item()
+            self.total_val_loss += loss.item()  # Accumulate the total loss
+            self.total_val_mlm_loss += mlm_loss.item()
+            self.total_val_cls_loss += cls_loss.item()
+        elif self.task == "ar_lm":
+            # 1) forward
+            logits = self(batch)                      # (B, Lp, V)
+            targs  = batch["targets"].long()          # (B, Lp)
+            
+
+            # shape sanity check
+            assert logits.size(0) == targs.size(0) and logits.size(1) == targs.size(1), \
+                f"AR val shapes mismatch: logits {logits.shape} vs targets {targs.shape}"
+
+            # 2) loss
+            lm_loss = self.ar_loss(logits.permute(0, 2, 1), targs)
+
+             # 3) logs (epoch-only for val)
+        # keep legacy key for callbacks that read it
+            self.log("val_loss_track", lm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True, prog_bar=True)
+            # explicit AR key, parallel to MLM naming
+            self.log("val/loss_lm_epoch", lm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+
+            # safe perplexity
+            ppl_safe = torch.exp(torch.clamp(lm_loss.detach(), max=20))
+            self.log("val/perplexity_epoch", ppl_safe, on_step=False, on_epoch=True, sync_dist=True)
+
+            # 4) accumulators (reuse your existing names or create total_val_lm_loss)
+            self.total_val_loss   += lm_loss.item()
+            self.total_val_mlm_loss += lm_loss.item()
+            # no return (match your MLM)
 
     def test_step(self, batch, batch_idx):
-        ## 1. ENCODER-DECODER
-        mlm_preds, cls_preds = self(batch)
-        ## 2. LOSS
-        mlm_targs = batch["target_tokens"].long()
-        cls_targs = batch["target_cls"].long()
-        mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
-        cls_loss = self.cls_loss(cls_preds, target = cls_targs)
+        if "mlm" in self.task:
+            ## 1. ENCODER-DECODER
+            mlm_preds, cls_preds = self(batch)
+            ## 2. LOSS
+            mlm_targs = batch["target_tokens"].long()
+            cls_targs = batch["target_cls"].long()
+            mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
+            cls_loss = self.cls_loss(cls_preds, target = cls_targs)
 
-        self.log("val/loss_mlm", mlm_loss.detach(), on_step=False, on_epoch=True)
-        self.log("val/loss_cls", cls_loss.detach(), on_step=False, on_epoch=True)
+            self.log("test/loss_mlm_epoch", mlm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            self.log("test/loss_cls_epoch", cls_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            self.log("test/loss_combined_epoch", loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            # optional legacy/progbar key for parity with val:
+            self.log("test_loss_track", loss.detach(), on_step=False, on_epoch=True, sync_dist=True, prog_bar=True)
 
-        loss = self.cls_w * cls_loss + self.mlm_w * mlm_loss
-        ## 3. METRICS
-        self.log_metrics(
-            predictions=(mlm_preds.detach(), cls_preds.detach()),
-            targets=(mlm_targs.detach(),  cls_targs.detach()),
-            loss=loss.detach(),
-            mlm_loss=mlm_loss.detach(),
-            stage="test",
-            on_step=False,
-            on_epoch=True,
-        )
+            loss = self.cls_w * cls_loss + self.mlm_w * mlm_loss
+            ## 3. METRICS
+            self.log_metrics(
+                predictions=(mlm_preds.detach(), cls_preds.detach()),
+                targets=(mlm_targs.detach(),  cls_targs.detach()),
+                loss=loss.detach(),
+                mlm_loss=mlm_loss.detach(),
+                stage="test",
+                on_step=False,
+                on_epoch=True,
+            )
+        elif self.task == "ar_lm":
+            # 1) forward
+            logits = self(batch)                # (B, Lp, V)
+            targs  = batch["targets"].long()    # (B, Lp)
+
+            # shape sanity check
+            assert logits.size(0) == targs.size(0) and logits.size(1) == targs.size(1), \
+                f"AR test shapes mismatch: logits {logits.shape} vs targets {targs.shape}"
+
+            # 2) loss
+            lm_loss = self.ar_loss(logits.permute(0, 2, 1), targs)  # CE expects (B,V,L)
+
+            # 3) logs (epoch-only)
+            self.log("test/loss_lm_epoch", lm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True)
+            # optional legacy/progbar key for quick glance:
+            self.log("test_loss_track", lm_loss.detach(), on_step=False, on_epoch=True, sync_dist=True, prog_bar=True)
+
+            # safe perplexity
+            ppl_safe = torch.exp(torch.clamp(lm_loss.detach(), max=20))
+            self.log("test/perplexity_epoch", ppl_safe, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
         """"""
@@ -356,19 +517,25 @@ class TransformerEncoder(pl.LightningModule):
             betas=(self.hparams.beta1, self.hparams.beta2),
             eps=self.hparams.epsilon,
         )
-
+        total_estimated_steps = self.trainer.estimated_stepping_batches
+        logger.info(f"total estimated steps by lightning = {total_estimated_steps}")
+        logger.info(f"total steps by hand = {self.hparams.epochs * self.hparams.steps_per_epoch}")
+        
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": torch.optim.lr_scheduler.OneCycleLR(
                     optimizer, 
                     max_lr=self.hparams.learning_rate, 
-                    epochs=self.hparams.epochs, 
-                    steps_per_epoch=self.hparams.steps_per_epoch,
+                    # epochs=self.hparams.epochs, 
+                    # steps_per_epoch=self.hparams.steps_per_epoch,
+                    total_steps=total_estimated_steps,
                     three_phase=False, 
-                    pct_start=0.05, 
+                    pct_start=0.01, 
                     max_momentum=self.hparams.beta1,
-                    div_factor=30
+                    div_factor=1e4,
+                    final_div_factor=1e4,
+                    anneal_strategy='linear',
                 ),  
                 "interval": "step",
                 "frequency": 1,
@@ -385,105 +552,120 @@ class TransformerEncoder(pl.LightningModule):
         stage,
         on_step: bool = True,
         on_epoch: bool = True,
+        sync_dist: bool = False,
     ):
         """Compute on step/epoch metrics"""
-        loss = loss.cpu()
+        loss = loss.detach() #cpu()
         cls_preds = F.softmax(predictions[1], dim=-1)
         mlm_preds = F.softmax(predictions[0], dim=-1).permute(0, 2, 1)
 
         cls_targs = targets[1]
         mlm_targs = targets[0]
 
+        unit = 'step' if on_step else 'epoch'
+
         if stage == "train":
 
-            self.log("train/loss", loss, on_step=on_step, on_epoch=on_epoch)
+            self.log(f"train_{unit}/loss", loss, on_step=on_step, on_epoch=on_epoch, sync_dist=sync_dist)
             self.log(
-                "train/pseudo_pplx", torch.sqrt(loss), on_step=on_step, on_epoch=on_epoch
+                f"train_{unit}/pseudo_pplx", torch.sqrt(loss), on_step=on_step, on_epoch=on_epoch, sync_dist=sync_dist
             )
             self.log(
-                "train/perplexity", torch.exp(mlm_loss), on_step=on_step, on_epoch=on_epoch
+                f"train_{unit}/perplexity", torch.exp(mlm_loss), on_step=on_step, on_epoch=on_epoch, sync_dist=sync_dist
             )
             self.log(
-                "train/accuracy",
+                f"train_{unit}/accuracy",
                 self.train_accuracy(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "train/recall",
+                f"train_{unit}/recall",
                 self.train_recall(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "train/precision",
+                f"train_{unit}/precision",
                 self.train_precision(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "train/f1",
+                f"train_{unit}/f1",
                 self.train_f1(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "train/cls_acc",
+                f"train_{unit}/cls_acc",
                 self.train_cls_acc(cls_preds, cls_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "train/cls_f1",
+                f"train_{unit}/cls_f1",
                 self.train_cls_f1(cls_preds, cls_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
 
 
         elif stage == "val":
-            self.log("val/loss", loss, on_step=on_step, on_epoch=on_epoch)
+            self.log(f"val_{unit}/loss", loss, on_step=on_step, on_epoch=on_epoch, sync_dist=sync_dist)
             self.log(
-                "val/pseudo_pplx", torch.sqrt(loss), on_step=on_step, on_epoch=on_epoch
+                f"val_{unit}/pseudo_pplx", torch.sqrt(loss), on_step=on_step, on_epoch=on_epoch, sync_dist=sync_dist
             )
             self.log(
-                "val/perplexity", torch.exp(mlm_loss), on_step=on_step, on_epoch=on_epoch
+                f"val_{unit}/perplexity", torch.exp(mlm_loss), on_step=on_step, on_epoch=on_epoch, sync_dist=sync_dist
             )
             self.log(
-                "val/accuracy",
+                f"val_{unit}/accuracy",
                 self.val_accuracy(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "val/recall",
+                f"val_{unit}/recall",
                 self.val_recall(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "val/precision",
+                f"val_{unit}/precision",
                 self.val_precision(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "val/f1",
+                f"val_{unit}/f1",
                 self.val_f1(mlm_preds, mlm_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "val/cls_acc",
+                f"val_{unit}/cls_acc",
                 self.val_cls_acc(cls_preds, cls_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
             self.log(
-                "val/cls_f1",
+                f"val_{unit}/cls_f1",
                 self.val_cls_f1(cls_preds, cls_targs),
                 on_step=on_step,
                 on_epoch=on_epoch,
+                sync_dist=sync_dist
             )
 
     @staticmethod

@@ -181,6 +181,7 @@ def _load_split(
         raise ValueError(f"Couple mode requires column '{PARTNER_KEY}' in data file {path}")
     logging.info(f"dtypes in data_df are {data_df.dtypes}")
     logging.info(f"Embedding dimension (individual) = {len(emb_df.columns)-1}")
+    logging.info(f"Couple mode: {couple}")
     logging.info(f"initial df size {len(data_df)}")
     if couple:
         mask = (
@@ -202,6 +203,16 @@ def _load_split(
         df = data_df[[PRIMARY_KEY, target_col]].merge(emb_df, on=PRIMARY_KEY, how="inner")
 
     logging.info(f"After merging with emb_df, df size {len(df)}")
+    logging.info(f"Final df columns: {list(df.columns)}")
+    if couple:
+        expected_emb_dim = 2 * (len(emb_df.columns) - 1)  # 2x individual embedding + 2 IDs + target
+        expected_total_cols = expected_emb_dim + 3  # embeddings + PRIMARY_KEY + PARTNER_KEY + target_col
+    else:
+        expected_emb_dim = len(emb_df.columns) - 1  # individual embedding 
+        expected_total_cols = expected_emb_dim + 2  # embeddings + PRIMARY_KEY + target_col
+    logging.info(f"Expected final embedding dim: {expected_emb_dim}")
+    logging.info(f"Expected total columns: {expected_total_cols}, actual: {len(df.columns)}")
+    
     df = df.dropna(subset=[target_col]).reset_index(drop=True)
 
     logging.info(f"After dropping na values from {target_col}, size of df = {len(df)}")
@@ -262,13 +273,17 @@ def _en_weights(counts, max_clip_ratio: float = 5.0) -> torch.Tensor:
 
 def _make_mlp(input_dim: int, out_dim: int, dropout: float) -> nn.Module:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return SimpleMLP(
+    m = SimpleMLP(
         input_dim,
         out_dim,
         num_layers=2,
         activation_fn="LeakyReLU",
         dropout_rate=dropout,
     ).to(device)
+    # Register as a persistent buffer so it’s included in state_dict()
+    m.register_buffer("best_thr", torch.tensor(float("nan"), device=device))
+    return m
+
 
 
 
@@ -296,15 +311,15 @@ def _best_f1_threshold_torch(p: torch.Tensor, y: torch.Tensor):
 
 
 
-def _classification_metrics(y_true: np.ndarray, logits: np.ndarray) -> Dict[str, float]:
+def _classification_metrics(y_true: np.ndarray, logits: np.ndarray, thr: float | None = None) -> Dict[str, float]:
     if logits.ndim == 1:  # binary
         probas = 1 / (1 + np.exp(-logits))
-        best_thr, best_f1 = _best_f1_threshold_torch(
-            torch.from_numpy(probas), torch.from_numpy(y_true)
-        )        
-        preds = (probas >= float(best_thr)).astype(int)
+        if thr is None:
+            best_thr, best_f1 = _best_f1_threshold_torch(torch.from_numpy(probas), torch.from_numpy(y_true))
+            thr = float(best_thr)
+        preds = (probas >= thr).astype(int)
         auc = roc_auc_score(y_true, probas)
-        f1 = f1_score(y_true, preds, average="binary")
+        f1  = f1_score(y_true, preds, average="binary")
         # logging.info(f"f1 check: {best_f1}, {f1}")
         if abs(best_f1 - f1) > 1e-4:
             logging.error(f"best_f1 = {best_f1}, f1 = {f1}")
@@ -517,16 +532,53 @@ def _train_target(
     # save model
     os.makedirs(cfg["model_save_dir"], exist_ok=True)
     mpath = os.path.join(
-        cfg["model_save_dir"], 
+        cfg["model_save_dir"],
         f"{cfg['model_name']}_{cfg['task_file']}_{target_col}.pt"
     )
+    if target_type == "binary":
+        assert any(k.endswith("best_thr") for k in best_state.keys()), "model state_dict has no 'best_thr' key"
+
     torch.save(best_state, mpath)
     return val_metrics, mpath
+
 
 
 # -----------------------------------------------------------------------------
 # Test‑only evaluation ---------------------------------------------------------
 # -----------------------------------------------------------------------------
+
+def make_pred_path(result_path: str, kind: str) -> str:
+    """
+    Build a new path from `cfg['result_path']`:
+      - Append '_probability' or '_label' to the 3rd parent folder (e.g., result_D3 -> result_D3_probability/label)
+      - Append '_probab' or '_label' to the filename stem.
+    """
+    p = Path(result_path)
+
+    if kind == "probab":
+        dir_suffix = "_probability"
+        file_suffix = "_probab"
+    elif kind == "label":
+        dir_suffix = "_label"
+        file_suffix = "_label"
+    else:
+        raise ValueError("kind must be 'probab' or 'label'")
+
+    # Need at least 3 parents: .../result_D3/preFer/medium-random/file.csv
+    if len(p.parents) < 3:
+        raise ValueError(f"result_path too shallow for rewriting: {result_path}")
+
+    # Third parent (index 2): result_D3
+    third_parent = p.parents[2]
+    new_third = third_parent.with_name(third_parent.name + dir_suffix)
+
+    # Rebuild the directory: result_D3_* / preFer / medium-random
+    new_dir = new_third / p.parents[1].name / p.parent.name
+    new_dir.mkdir(parents=True, exist_ok=True)
+
+    # New filename: ..._probab.csv or ..._label.csv
+    new_name = f"{p.stem}{file_suffix}{p.suffix}"
+    return str(new_dir / new_name)
 
 def _eval_test(
     test_df: pd.DataFrame,
@@ -562,11 +614,34 @@ def _eval_test(
         if target_type in ["numeric", "binary"]:
             logits = logits.reshape(-1)
 
-    return (
-        _regression_metrics(y, logits)
-        if target_type == "numeric"
-        else _classification_metrics(y, logits)
-    )
+    test_metrics =  None
+    if target_type == "binary":
+        thr = float(model.best_thr)
+        if np.isnan(thr):
+            probas_tmp = 1.0/(1.0 + np.exp(-logits))
+            thr_t, _ = _best_f1_threshold_torch(
+                torch.from_numpy(probas_tmp), torch.from_numpy(y)
+            )
+            thr = float(thr_t)
+            logging.info(f"best_thr is NaN in checkpoint; defaulting to {thr}")
+        logging.info(f">>>>>>> Using threshold {thr} for binary classification")
+        test_metrics = _classification_metrics(y, logits, thr=thr)
+        probas = 1.0/(1.0 + np.exp(-logits))
+        preds = (probas >= thr).astype(int)
+        # Save probability and label CSVs
+        prob_path = make_pred_path(cfg["result_path"], "probab")
+        label_path = make_pred_path(cfg["result_path"], "label")
+
+        # Write two-column CSVs: RINPERSOON, prediction
+        rin = test_df[PRIMARY_KEY].to_numpy()
+        pd.DataFrame({PRIMARY_KEY: rin, "probability": probas}).to_csv(prob_path, index=False)
+        pd.DataFrame({PRIMARY_KEY: rin, "label": preds}).to_csv(label_path, index=False)
+    elif target_type == "numeric":
+        test_metrics = _regression_metrics(y, logits)
+    else: # categorical
+        test_metrics = _classification_metrics(y, logits)
+
+    return test_metrics
 
 
 # -----------------------------------------------------------------------------

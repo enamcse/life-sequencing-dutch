@@ -23,7 +23,7 @@ from pop2vec.llm.src.new_code.constants import (
 )
 
 
-from typing import Union
+from typing import Union, Optional, Dict, List
 
 print_now = partial(print, flush=True)
 logging.basicConfig(level=logging.INFO)
@@ -437,3 +437,63 @@ def read_hparams(file_path):
         return read_yaml(file_path)
     else:
         return read_hparams_from_txt(file_path)
+
+def load_special_ids(
+    vocab_csv_path: str,
+    pad_token: str = "[PAD]",
+    cls_token: str = "[CLS]",
+    death_token: str = "[DEATH]",
+    pad_fallback: int = 0,
+) -> Dict[str, Optional[int]]:
+    """
+    Expects CSV with columns: TOKEN,CATEGORY,ID
+    Returns {'pad_id', 'cls_id', 'death_id'}; death_id can be None if not present.
+    """
+    df = pd.read_csv(vocab_csv_path, dtype={"TOKEN": str, "CATEGORY": str, "ID": int})
+    def _find(tok: str) -> Optional[int]:
+        s = df.loc[df["TOKEN"] == tok, "ID"]
+        return int(s.iloc[0]) if not s.empty else None
+
+    pad_id   = _find(pad_token) or pad_fallback
+    cls_id   = _find(cls_token)
+    death_id = _find(death_token)  # None is fine on dummy data
+    return {"pad_id": pad_id, "cls_id": cls_id, "death_id": death_id}
+
+
+def load_vocab_df(vocab_csv_path: str) -> pd.DataFrame:
+    """Load vocab CSV with columns: TOKEN,CATEGORY,ID."""
+    return pd.read_csv(vocab_csv_path, dtype={"TOKEN": str, "CATEGORY": str, "ID": int})
+
+def ids_to_tokens(id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False) -> List[str]:
+    """Map token IDs to human-readable strings (TOKEN or TOKEN|CATEGORY)."""
+    tok = vocab_df.set_index("ID")["TOKEN"].to_dict()
+    if not with_category:
+        return [tok.get(int(i), f"<UNK:{i}>") for i in id_list]
+    cat = vocab_df.set_index("ID")["CATEGORY"].to_dict()
+    return [f"{tok.get(int(i), f'<UNK:{i}>' )}|{cat.get(int(i), '')}" for i in id_list]
+
+def pretty_render_tokens(title: str, id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False, max_per_line: int = 20) -> str:
+    """Return a nicely formatted string for tokens by name."""
+    names = ids_to_tokens(id_list, vocab_df, with_category=with_category)
+    lines = [f"\n=== {title} (n={len(id_list)}) ==="]
+    for i in range(0, len(names), max_per_line):
+        lines.append(" ".join(names[i:i+max_per_line]))
+    return "\n".join(lines)
+
+def pretty_print_tokens(title: str, id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False, out_path: Optional[str] = None, max_per_line: int = 20):
+    """Print tokens by name; also write to file if out_path is given."""
+    txt = pretty_render_tokens(title, id_list, vocab_df, with_category=with_category, max_per_line=max_per_line)
+    print(txt)
+    if out_path:
+        # append so you can print multiple sections to one file
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write(txt + "\n")
+
+def get_vocab_size(vocab_csv_path: str) -> int:
+    """
+    Returns a safe vocab size for building/tieing embeddings.
+    Assumes CSV header: TOKEN,CATEGORY,ID and IDs are integer-coded.
+    We use max(ID)+1 so it's valid even if IDs are non-contiguous or non-zero-based.
+    """
+    df = pd.read_csv(vocab_csv_path, usecols=["ID"])
+    return int(df["ID"].max()) + 1

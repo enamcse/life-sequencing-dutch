@@ -32,9 +32,8 @@ from pop2vec.llm.src.new_code.utils import read_json
 from pop2vec.llm.src.new_code.utils import read_hparams
 from pop2vec.llm.src.transformer.models import TransformerEncoder
 
-
-
-
+from pop2vec.llm.src.new_code.load_data import collate_autoreg
+from pop2vec.llm.src.new_code.utils import load_special_ids
 
 logging.basicConfig(
   format="%(asctime)s %(name)s %(levelname)s: %(message)s",
@@ -114,7 +113,7 @@ def load_hparams(hparams_path: str):
     return update_hparams_with_defaults(hparams)
 
 # Helper: Create training and validation dataloaders.
-def get_dataloaders(mlm_path, num_val_items, batch_size):
+def get_dataloaders(mlm_path, num_val_items, batch_size, use_ar, pad_id, death_id):
     val_dataset = CustomLazyHDF5Dataset(
         mlm_path,
         validation=True,
@@ -126,13 +125,15 @@ def get_dataloaders(mlm_path, num_val_items, batch_size):
         num_val_items=num_val_items
     )
     num_train_workers = max(len(os.sched_getaffinity(0)) - 3, 1)
+
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         num_workers=min(num_train_workers, 2),
         prefetch_factor=2, 
         persistent_workers=True,  # keeps the worker processes + HDF5 handles alive
-        pin_memory=True       
+        pin_memory=True,
+        collate_fn=(lambda b: collate_autoreg(b, pad_id, death_id)) if use_ar else None,       
     )
     train_dataloader = DataLoader(
         train_dataset,
@@ -141,7 +142,8 @@ def get_dataloaders(mlm_path, num_val_items, batch_size):
         shuffle=True,
         prefetch_factor=2, 
         persistent_workers=True,  # keeps the worker processes + HDF5 handles alive
-        pin_memory=True       
+        pin_memory=True,
+        collate_fn=(lambda b: collate_autoreg(b, pad_id, death_id)) if use_ar else None,       
     )
     return train_dataloader, val_dataloader
 
@@ -168,9 +170,16 @@ def pretrain(hparams):
     # Determine batch size and validation interval.
     num_val_items = hparams['num_val_items']
     batch_size = hparams['batch_size'] 
+
+    ids = load_special_ids(hparams["vocab_path"])
+    PAD_ID   = ids['pad_id']
+    CLS_ID   = ids['cls_id']
+    DEATH_ID = ids['death_id']  # can be None when missing (dummy data)
+    use_ar = getattr(hparams, "training_task", "mlm") == "ar_lm" if hparams else None
+
     # Create dataloaders.
     logger.info("loading dataloaders")
-    train_dataloader, val_dataloader = get_dataloaders(mlm_path, num_val_items, batch_size)
+    train_dataloader, val_dataloader = get_dataloaders(mlm_path, num_val_items, batch_size, use_ar, PAD_ID, DEATH_ID)
     accumulate_grad_batches = hparams['accumulate_grad_batches']
     hparams['steps_per_epoch'] = (
         int(len(train_dataloader) / (N_DEVICES*accumulate_grad_batches))+2

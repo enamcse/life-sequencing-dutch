@@ -1,46 +1,28 @@
-checkpoint_dir: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_20251111"
-mlm_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=mlm/masking=event/encoded_dryrun.h5"
+# ---- paths ----
+mlm_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5"
 vocab_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv"
-num_val_items: 5000
+# checkpoint_dir: "/path/to/checkpoints"     # OR set checkpoint_path instead
+pretrained_model_path: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/model-epoch=00-step=69320-val_loss_track=0.23.ckpt"
+pretrained_model_hparams: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/lightning_logs/version_3/hparams.yaml"
 
-epochs: 1
-train_split: 0.8
-batch_size: 32
-max_length: 512
-hidden_size: 160
-hidden_ff: 1240
-hidden_act: "swish"
-n_encoders: 3
-n_heads: 10
-n_local: 7
-local_window_size: 38
-norm_type: "rezero"
-att_dropout: 0.1 ## Attention Layers
-fw_dropout: 0.1 ## Positionwise Layers
-dc_dropout: 0.1 ## Decoder Layer
-emb_dropout: 0.1 ## Embedding dropout
-parametrize_emb: True
-norm_input_emb: False
-norm_output_emb: True
-weight_tying: "wt"
-## TASK AND LOGS
-training_task: mlm # name of the task [mlm, simple]
-experiment_name: pretrain_dutch_0
-experiment_version: 1
-## ATTENTION
-attention_type: "performer"
-multihead_dc: False
-num_random_features: 436
 
-# From trainer args..
-learning_rate: 2.e-4
-weight_decay: 0.01
-beta1: 0.9
-beta2: 0.999
+# ---- generation controls ----
+horizon: 20                 # max tokens to generate
+top_k: 20                   # 0 = greedy, >0 = top-k sampling
+temperature: 1.0            # sampling temperature
 
-cls_num_targs: 3
+# ---- prefix selection ----
+prefix_id: ""             # optional: e.g., "rinpersoon_id"; empty = first sample
+prefix_len: 20                # optional int; blank = use full available prefix
 
-epsilon: 1.e-6
-stage: "pre_training"
-implementation: "v1"
-version: 1.0
+# ---- printing / output ----
+with_category: true        # print TOKEN|CATEGORY (true) vs TOKEN only (false)
+tokens_write_path: "/projects/0/prjs1589/stonybrook/llm/gen_out/pretty_tokens_20251117.txt"   # leave blank to only print to stdout
+
+# ---- (optional) specials by name if they differ in your vocab)
+pad_token: "[PAD]"
+cls_token: "[CLS]"
+death_token: "[DEATH]"
+
+# ---- (kept for consistency with your pipeline checks)
+num_val_items: 100000
