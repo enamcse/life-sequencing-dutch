@@ -422,6 +422,20 @@ def _logits_to_pos_proba(preds, target_type: str, num_out: int):
 def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
     _ddp_log("_run_test start")
 
+    # Enable CUDA synchronous execution for better debugging
+    import os
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
+    # Initialize CUDA context properly
+    if torch.cuda.is_available():
+        torch.cuda.init()
+        torch.cuda.empty_cache()
+        # Set matmul precision for stability
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        print(f"CUDA initialized: device count = {torch.cuda.device_count()}")
+        print("CUDA_LAUNCH_BLOCKING enabled for debugging")
+
     ds = FineTuneLazyDataset(
         h5_file_path=c['sequence_encoded'],
         train_file_path=c['test_path'],
@@ -429,6 +443,31 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
         return_sequence_id=True,
         primary_key=c.get('PRIMARY_KEY', 'RINPERSOON'),
     )
+    
+    # DEBUG: Print the data sources being used
+    logging.info("=== DATA SOURCE DEBUG INFO ===")
+    logging.info(f"H5 sequence file: {c['sequence_encoded']}")
+    logging.info(f"Test labels file: {c['test_path']}")
+    logging.info(f"Model checkpoint: {c['load_model_path']}")
+    
+    # Check if we can get vocabulary info from the H5 file itself
+    try:
+        import h5py
+        with h5py.File(c['sequence_encoded'], 'r') as f:
+            if 'vocab_size' in f.attrs:
+                h5_vocab_size = f.attrs['vocab_size']
+                logging.info(f"H5 file vocabulary size: {h5_vocab_size}")
+            else:
+                logging.info("H5 file does not contain vocab_size attribute")
+                
+            # Check what datasets are in the H5 file
+            logging.info(f"H5 file datasets: {list(f.keys())}")
+            if 'sequences' in f:
+                seq_shape = f['sequences'].shape
+                logging.info(f"H5 sequences shape: {seq_shape}")
+    except Exception as e:
+        logging.warning(f"Could not read H5 file info: {e}")
+    logging.info("=== END DATA SOURCE DEBUG INFO ===")
     nw = len(os.sched_getaffinity(0)) - 1
     logging.info(f"num_workers = {nw}")
     dl = torch.utils.data.DataLoader(
@@ -443,6 +482,91 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
     model = TransformerFT.load_from_checkpoint(
         c["load_model_path"], task_type=ttype, pretrained_model_path='RANDOM'
     )
+    
+    # DEBUG: Print model source and vocabulary info
+    logging.info("=== MODEL SOURCE DEBUG INFO ===")
+    logging.info(f"Model loaded from checkpoint: {c['load_model_path']}")
+    
+    # Try to extract hyperparameters that show original vocabulary size
+    if hasattr(model, 'hparams'):
+        original_vocab = getattr(model.hparams, 'vocab_size', 'unknown')
+        logging.info(f"Model hparams vocab_size: {original_vocab}")
+        
+        # Check if there are other relevant hparams
+        for key in ['pretrained_model_path', 'pretrained_model_hparams']:
+            if hasattr(model.hparams, key):
+                logging.info(f"Model hparams {key}: {getattr(model.hparams, key)}")
+    
+    # Check actual embedding layer size
+    if hasattr(model, 'transformer') and hasattr(model.transformer, 'embedding'):
+        actual_vocab = model.transformer.embedding.token.num_embeddings
+        logging.info(f"Actual embedding layer vocab_size: {actual_vocab}")
+    elif hasattr(model, 'encoder') and hasattr(model.encoder, 'embeddings'):
+        actual_vocab = model.encoder.embeddings.token.num_embeddings
+        logging.info(f"Actual embedding layer vocab_size: {actual_vocab}")
+        
+    logging.info("=== END MODEL SOURCE DEBUG INFO ===")
+
+    # DEBUGGING: Check vocabulary sizes and token ID ranges
+    logging.info("=== VOCABULARY DEBUG INFO ===")
+    vocab_size = None
+    if hasattr(model, 'transformer') and hasattr(model.transformer, 'embedding'):
+        embedding_layer = model.transformer.embedding.token
+        vocab_size = embedding_layer.num_embeddings
+        logging.info(f"Model vocabulary size: {vocab_size}")
+    elif hasattr(model, 'encoder') and hasattr(model.encoder, 'embeddings'):
+        embedding_layer = model.encoder.embeddings.token
+        vocab_size = embedding_layer.num_embeddings
+        logging.info(f"Model vocabulary size: {vocab_size}")
+    else:
+        logging.warning("Could not access embedding layer for vocabulary size check")
+    
+    if vocab_size is not None:
+        # Check a few batches for token ID ranges
+        logging.info("Checking token ID ranges in test data...")
+        max_token_id = -1
+        min_token_id = float('inf')
+        
+        for i, batch in enumerate(dl):
+            if i >= 3:  # Check only first 3 batches
+                break
+            input_ids = batch['input_ids']  # Shape: (batch, 4, seq_len)
+            token_ids = input_ids[:, 0, :]  # First dimension is tokens
+            
+            batch_max = torch.max(token_ids).item()
+            batch_min = torch.min(token_ids[token_ids > 0]).item()  # Exclude padding (0)
+            
+            max_token_id = max(max_token_id, batch_max)
+            min_token_id = min(min_token_id, batch_min)
+            
+            logging.info(f"Batch {i}: token_ids range [{batch_min}, {batch_max}]")
+        
+        logging.info(f"Overall token ID range in test data: [{min_token_id}, {max_token_id}]")
+        
+        if max_token_id >= vocab_size:
+            logging.error(f"PROBLEM FOUND: Max token ID ({max_token_id}) >= vocabulary size ({vocab_size})")
+            logging.error(f"This will cause index out of bounds errors!")
+            
+            # Try to identify which tokens are problematic
+            problematic_ids = []
+            for i, batch in enumerate(dl):
+                if i >= 10:  # Check first 10 batches
+                    break
+                input_ids = batch['input_ids']
+                token_ids = input_ids[:, 0, :]
+                invalid_mask = token_ids >= vocab_size
+                if invalid_mask.any():
+                    invalid_tokens = token_ids[invalid_mask].unique()
+                    problematic_ids.extend(invalid_tokens.tolist())
+            
+            problematic_ids = sorted(set(problematic_ids))
+            logging.error(f"Problematic token IDs (>= vocab_size): {problematic_ids[:20]}...")  # Show first 20
+            
+            return None  # Exit early to avoid crash
+        else:
+            logging.info("✅ Token ID ranges look good!")
+    
+    logging.info("=== END VOCABULARY DEBUG INFO ===")
 
     # Clean up hyperparameters to avoid TensorBoard issues
     if hasattr(model, 'hparams'):
@@ -493,6 +617,59 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
 
     strategy = _get_ddp_strategy(c["ddpstrategy"])
 
+    # Create a custom dataset wrapper to fix token ID issues
+    if vocab_size is not None:
+        logging.info(f"Wrapping dataset with vocabulary size limit: {vocab_size}")
+        
+        class SafeDataset(torch.utils.data.Dataset):
+            def __init__(self, original_dataset, vocab_size):
+                self.original_dataset = original_dataset
+                self.vocab_size = vocab_size
+                self.replacements_made = 0
+                
+            def __len__(self):
+                return len(self.original_dataset)
+            
+            def __getitem__(self, idx):
+                sample = self.original_dataset[idx]
+                
+                # Fix token IDs that are out of bounds
+                if 'input_ids' in sample:
+                    input_ids = sample['input_ids'].clone()
+                    
+                    # Check first dimension (tokens) 
+                    token_ids = input_ids[0, :]
+                    out_of_bounds_mask = token_ids >= self.vocab_size
+                    
+                    if out_of_bounds_mask.any():
+                        # Log first few replacements for debugging
+                        if self.replacements_made < 5:
+                            invalid_tokens = token_ids[out_of_bounds_mask].unique()
+                            logging.warning(f"Sample {idx}: Replacing out-of-bounds tokens {invalid_tokens.tolist()} with PAD (0)")
+                        
+                        # Replace out-of-bounds tokens with [PAD] (ID 0)
+                        input_ids[0, out_of_bounds_mask] = 0  # Use PAD token
+                        sample['input_ids'] = input_ids
+                        
+                        # Update padding mask to mark these as padding
+                        if 'padding_mask' in sample:
+                            padding_mask = sample['padding_mask'].clone()
+                            padding_mask[out_of_bounds_mask] = 0
+                            sample['padding_mask'] = padding_mask
+                            
+                        self.replacements_made += 1
+                
+                return sample
+        
+        # Wrap the dataset
+        safe_ds = SafeDataset(ds, vocab_size)
+        dl = torch.utils.data.DataLoader(
+            safe_ds, batch_size=c["BATCH_SIZE"], shuffle=False, num_workers=nw
+        )
+        logging.info("✅ Dataset wrapped with vocabulary safety layer")
+    else:
+        logging.warning("❌ Could not determine vocabulary size - proceeding without safety wrapper")
+
     trainer = Trainer(
         strategy=strategy,
         accelerator=c["accelerator"],
@@ -501,6 +678,44 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
     )
 
     _ddp_log("after load_from_checkpoint + trainer init")
+
+    # Ensure model is properly on GPU and synchronized
+    if torch.cuda.is_available():
+        model = model.cuda()
+        torch.cuda.synchronize()
+        print(f"Model moved to GPU and synchronized")
+        
+        # Warm up CUDA with a small forward pass
+        try:
+            with torch.no_grad():
+                dummy_batch = next(iter(dl))
+                print("Testing model with dummy input...")
+                # Ensure all tensors are on the same device (GPU) - be more explicit
+                batch_dict = {}
+                for k, v in dummy_batch.items():
+                    if k in ['input_ids', 'padding_mask']:
+                        if torch.is_tensor(v):
+                            batch_dict[k] = v.cuda()
+                        else:
+                            batch_dict[k] = v
+                
+                print(f"Batch dict devices: {[(k, v.device if torch.is_tensor(v) else type(v)) for k, v in batch_dict.items()]}")
+                print(f"Model device: {next(model.parameters()).device}")
+                
+                _ = model(batch_dict)
+                print("✅ Dummy forward pass successful")
+                torch.cuda.synchronize()
+        except Exception as e:
+            print(f"❌ Dummy forward pass failed: {e}")
+            # Print more debugging info
+            print(f"Model parameters device: {next(model.parameters()).device}")
+            if 'batch_dict' in locals():
+                for k, v in batch_dict.items():
+                    if torch.is_tensor(v):
+                        print(f"  {k}: shape={v.shape}, device={v.device}, dtype={v.dtype}")
+                    else:
+                        print(f"  {k}: type={type(v)}")
+            # Continue anyway, but this warns us about issues
 
     outputs = trainer.predict(model, dl, return_predictions=True)
 

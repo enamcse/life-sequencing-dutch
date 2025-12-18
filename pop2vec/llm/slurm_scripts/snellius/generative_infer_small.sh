@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=15
 #SBATCH --time=100:00:00
 #SBATCH --mem=80G
-#SBATCH -p gpu_a100
+#SBATCH -p gpu_h100
 #SBATCH --gpus-per-node=2
 #SBATCH -e /projects/0/prjs1589/stonybrook/logs/%x-%j.err
 #SBATCH -o /projects/0/prjs1589/stonybrook/logs/%x-%j.out

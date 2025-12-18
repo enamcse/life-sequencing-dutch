@@ -117,12 +117,14 @@ def get_dataloaders(mlm_path, num_val_items, batch_size, use_ar, pad_id, death_i
     val_dataset = CustomLazyHDF5Dataset(
         mlm_path,
         validation=True,
-        num_val_items=num_val_items
+        num_val_items=num_val_items,
+        mlm_encoded=False, 
     )
     train_dataset = CustomLazyHDF5Dataset(
         mlm_path,
         validation=False,
-        num_val_items=num_val_items
+        num_val_items=num_val_items,
+        mlm_encoded=False,
     )
     num_train_workers = max(len(os.sched_getaffinity(0)) - 3, 1)
 
@@ -175,7 +177,7 @@ def pretrain(hparams):
     PAD_ID   = ids['pad_id']
     CLS_ID   = ids['cls_id']
     DEATH_ID = ids['death_id']  # can be None when missing (dummy data)
-    use_ar = getattr(hparams, "training_task", "mlm") == "ar_lm" if hparams else None
+    use_ar = hparams.get("training_task", "mlm") == "ar_lm"
 
     # Create dataloaders.
     logger.info("loading dataloaders")
@@ -247,7 +249,7 @@ if __name__ == "__main__":
     
     assert DDP_STRATEGY in ["auto", "ddp_mpi", "ddp", "gloo"]
 
-    # torch.set_float32_matmul_precision("medium")
+    torch.set_float32_matmul_precision("medium")
 
     pretrain(load_hparams(HPARAMS))
     

@@ -472,17 +472,15 @@ def ids_to_tokens(id_list: List[int], vocab_df: pd.DataFrame, with_category: boo
     cat = vocab_df.set_index("ID")["CATEGORY"].to_dict()
     return [f"{tok.get(int(i), f'<UNK:{i}>' )}|{cat.get(int(i), '')}" for i in id_list]
 
-def pretty_render_tokens(title: str, id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False, max_per_line: int = 20) -> str:
-    """Return a nicely formatted string for tokens by name."""
+def pretty_render_tokens(title: str, id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False) -> str:
+    """Return a nicely formatted string for tokens by name - ONE LINE per sequence."""
     names = ids_to_tokens(id_list, vocab_df, with_category=with_category)
-    lines = [f"\n=== {title} (n={len(id_list)}) ==="]
-    for i in range(0, len(names), max_per_line):
-        lines.append(" ".join(names[i:i+max_per_line]))
-    return "\n".join(lines)
+    # Single line: title, count, comma-separated tokens
+    return f"{title},{len(id_list)},{','.join(names)}"
 
-def pretty_print_tokens(title: str, id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False, out_path: Optional[str] = None, max_per_line: int = 20):
-    """Print tokens by name; also write to file if out_path is given."""
-    txt = pretty_render_tokens(title, id_list, vocab_df, with_category=with_category, max_per_line=max_per_line)
+def pretty_print_tokens(title: str, id_list: List[int], vocab_df: pd.DataFrame, with_category: bool = False, out_path: Optional[str] = None):
+    """Print tokens by name; also write to file if out_path is given. ONE LINE per sequence."""
+    txt = pretty_render_tokens(title, id_list, vocab_df, with_category=with_category)
     print(txt)
     if out_path:
         # append so you can print multiple sections to one file

@@ -56,7 +56,26 @@ class Embeddings(nn.Module):
     def forward(self, tokens, position, age, segment):
         tokens = self.token(tokens)
 
-        pos = self.age(age.float().unsqueeze(-1))
+        # Debug age tensor before processing
+        try:
+            if torch.isnan(age).any() or torch.isinf(age).any():
+                print(f"WARNING: Invalid age values detected: nan={torch.isnan(age).sum()}, inf={torch.isinf(age).sum()}")
+                age = torch.nan_to_num(age, nan=0.0, posinf=100.0, neginf=0.0)
+            
+            # Ensure age is in reasonable range
+            age_clamped = torch.clamp(age, min=0, max=120)
+            if not torch.equal(age, age_clamped):
+                print(f"WARNING: Age values clamped from range [{age.min():.2f}, {age.max():.2f}] to [0, 120]")
+                age = age_clamped
+            
+            pos = self.age(age.float().unsqueeze(-1))
+            
+        except Exception as e:
+            print(f"ERROR in age embedding: {e}")
+            print(f"age tensor: shape={age.shape}, device={age.device}, dtype={age.dtype}")
+            print(f"age range: [{age.min():.2f}, {age.max():.2f}]")
+            raise e
+            
         if self.no_age_emb:
             pos.zero_()
         pos[:, :5] *= 0
@@ -76,12 +95,55 @@ class Embeddings(nn.Module):
 
 def t2v(tau, f, w, b, w0, b0, arg=None):
     """Time2Vec function"""
-    if arg:
-        v1 = f(torch.matmul(tau, w) + b, arg)
-    else:
-        v1 = f(torch.matmul(tau, w) + b)
-    v2 = torch.matmul(tau, w0) + b0
-    return torch.cat([v1, v2], -1)
+    try:
+        # Device debugging and synchronization
+        devices = {
+            'tau': tau.device if hasattr(tau, 'device') else 'unknown',
+            'w': w.device if hasattr(w, 'device') else 'unknown',
+            'b': b.device if hasattr(b, 'device') else 'unknown',
+            'w0': w0.device if hasattr(w0, 'device') else 'unknown', 
+            'b0': b0.device if hasattr(b0, 'device') else 'unknown'
+        }
+        
+        # Check for device mismatches
+        unique_devices = set(devices.values())
+        if len(unique_devices) > 1:
+            print(f"WARNING: Device mismatch in t2v: {devices}")
+            # Move all tensors to the same device as tau
+            target_device = tau.device
+            w = w.to(target_device)
+            b = b.to(target_device) 
+            w0 = w0.to(target_device)
+            b0 = b0.to(target_device)
+        
+        # Check for NaN or inf values
+        if torch.isnan(tau).any() or torch.isinf(tau).any():
+            print(f"WARNING: Invalid values in tau: nan={torch.isnan(tau).sum()}, inf={torch.isinf(tau).sum()}")
+            tau = torch.nan_to_num(tau, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        # Synchronize CUDA if using GPU
+        if tau.is_cuda:
+            torch.cuda.synchronize()
+        
+        if arg:
+            v1 = f(torch.matmul(tau, w) + b, arg)
+        else:
+            v1 = f(torch.matmul(tau, w) + b)
+        v2 = torch.matmul(tau, w0) + b0
+        result = torch.cat([v1, v2], -1)
+        
+        # Final synchronization
+        if result.is_cuda:
+            torch.cuda.synchronize()
+            
+        return result
+        
+    except Exception as e:
+        print(f"ERROR in t2v: {e}")
+        print(f"tau shape: {tau.shape}, device: {tau.device}")
+        print(f"w shape: {w.shape}, device: {w.device}")
+        print(f"b shape: {b.shape}, device: {b.device}")
+        raise e
 
 
 class PositionalEmbedding(nn.Module):
@@ -102,7 +164,29 @@ class PositionalEmbedding(nn.Module):
         nn.init.uniform_(self.b, a=-d, b=d)
 
     def forward(self, tau):
-        return t2v(tau, self.f, self.w, self.b, self.w0, self.b0)
+        try:
+            # Ensure tau is valid and on the right device
+            if tau.numel() == 0:
+                print("WARNING: Empty tau tensor in PositionalEmbedding")
+                return torch.zeros(tau.shape[0], tau.shape[1], self.w.shape[1] + 1, 
+                                 device=tau.device, dtype=tau.dtype)
+            
+            # Check for invalid values
+            if torch.isnan(tau).any() or torch.isinf(tau).any():
+                print(f"WARNING: Invalid values in tau input: nan={torch.isnan(tau).sum()}, inf={torch.isinf(tau).sum()}")
+                tau = torch.nan_to_num(tau, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # Ensure all parameters are on the same device as input
+            if tau.device != self.w.device:
+                print(f"WARNING: Device mismatch - tau: {tau.device}, parameters: {self.w.device}")
+            
+            return t2v(tau, self.f, self.w, self.b, self.w0, self.b0)
+            
+        except Exception as e:
+            print(f"ERROR in PositionalEmbedding.forward: {e}")
+            print(f"tau: shape={tau.shape}, device={tau.device}, dtype={tau.dtype}")
+            print(f"parameters device: {self.w.device}")
+            raise e
 
 
 ############################

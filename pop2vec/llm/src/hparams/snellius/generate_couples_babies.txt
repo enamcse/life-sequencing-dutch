@@ -1,0 +1,32 @@
+# ---- paths ----
+mlm_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5"
+vocab_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv"
+pretrained_model_path: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/model-epoch=00-step=69320-val_loss_track=0.23.ckpt"
+pretrained_model_hparams: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/lightning_logs/version_3/hparams.yaml"
+
+# ---- generation controls ----
+# Generate 3 years of future events to check for babies
+# Assuming ~10-20 events per year, 3 years = ~30-60 tokens
+horizon: 60                 # 3 years worth of events
+top_k: 30                   
+temperature: 0.9            # Slightly lower for more realistic sequences
+num_sequences: 500          # Test on 500 couples/individuals
+
+# ---- prefix selection ----
+# For couples, we want sequences with adult age (25-40) 
+# You may need to filter these from the dataset manually
+# or use specific IDs known to be couples
+prefix_id: ""               
+prefix_len: 50              # Use substantial history (couple's past)
+
+# ---- printing / output ----
+with_category: true
+tokens_write_path: "/projects/0/prjs1589/stonybrook/llm/gen_out/couples_next_3_years.txt"
+
+# ---- (optional) ----
+pad_token: "[PAD]"
+cls_token: "[CLS]"
+death_token: "[DEATH]"
+
+# ---- (kept for consistency) ----
+num_val_items: 100000

@@ -2,7 +2,6 @@
 import os, glob, argparse, logging, torch
 from typing import Optional
 from torch.nn.functional import softmax
-from tqdm import tqdm
 
 # --- project imports (kept as in your snippet) ---
 from pop2vec.llm.src.new_code.utils import (
@@ -188,8 +187,9 @@ def main():
     log_every_step = int(hp.get("log_every_step", 0))
     with_category  = bool(hp.get("with_category", False))
     tokens_write_path = str(hp.get("tokens_write_path", "")).strip() or None
+    batch_size    = int(hp.get("inference_batch_size", 1))  # NEW: batch processing
 
-    logger.info(f"Device={device} | horizon={horizon} | top_k={top_k} | temperature={temperature} | log_every_step={log_every_step}")
+    logger.info(f"Device={device} | horizon={horizon} | top_k={top_k} | temperature={temperature} | log_every_step={log_every_step} | batch_size={batch_size}")
 
     # 5) Load AR model
     model = TransformerEncoder.load_from_checkpoint(ckpt_path, strict=False)
@@ -212,49 +212,82 @@ def main():
 
     # 7) Generate + pretty print generated
     num_sequences = int(hp.get("num_sequences", 1))
-    for seq_idx in tqdm(range(num_sequences), desc="Generating sequences", unit="seq"):
-        logger.info(f"Generating sequence {seq_idx + 1}/{num_sequences}")
-        item = _select_prefix_item(ds, prefix_id, seq_idx)
+    
+    # Process in batches for parallel execution
+    for batch_start in range(0, num_sequences, batch_size):
+        batch_end = min(batch_start + batch_size, num_sequences)
+        batch_indices = range(batch_start, batch_end)
+        logger.info(f"Processing batch: sequences {batch_start+1} to {batch_end} (batch size={len(batch_indices)})")
+        
+        # Collect batch data
+        batch_items = []
+        batch_original_tokens = []
+        max_len = 0
+        
+        for seq_idx in batch_indices:
+            item = _select_prefix_item(ds, prefix_id, seq_idx)
+            x4: torch.Tensor = item["input_ids"]      # (4, L)
+            pm: torch.Tensor = item["padding_mask"]   # (L,)
+            L_real = int(pm.sum().item())
+            x4, pm = x4[:, :L_real], pm[:L_real]
 
-        x4: torch.Tensor = item["input_ids"]      # (4, L)
-        pm: torch.Tensor = item["padding_mask"]   # (L,)
-        L_real = int(pm.sum().item())
-        x4, pm = x4[:, :L_real], pm[:L_real]
-
-        if "prefix_len" in hp and str(hp["prefix_len"]).strip() not in ("", "None"):
-            Lp = min(int(hp["prefix_len"]), x4.size(1))
-            x4, pm = x4[:, :Lp], pm[:Lp]
-            logger.info(f"Truncated prefix to prefix_len={Lp}")
-
-        original_tokens = x4[0].tolist()
-
-        x4_b, pm_b = x4.unsqueeze(0).to(device), pm.unsqueeze(0).to(device)
-        generated_tokens = generate_next_tokens(
-            model,
-            prefix_4stream=x4_b,
-            pad_mask=pm_b,
-            horizon=horizon,
-            top_k=top_k,
-            temperature=temperature,
-            death_id=DEATH_ID,
-            log_every_step=log_every_step,
-            vocab_df=vocab_df,
-            with_category=with_category,
-        )
-        pretty_print_tokens(
-            f"ORIGINAL PREFIX TOKENS (Sequence {seq_idx + 1})",
-            original_tokens,
-            vocab_df,
-            with_category=with_category,
-            out_path=tokens_write_path,
-        )
-        pretty_print_tokens(
-            f"GENERATED TOKENS (Sequence {seq_idx + 1})",
-            generated_tokens,
-            vocab_df,
-            with_category=with_category,
-            out_path=tokens_write_path,
-        )
+            if "prefix_len" in hp and str(hp["prefix_len"]).strip() not in ("", "None"):
+                Lp = min(int(hp["prefix_len"]), x4.size(1))
+                x4, pm = x4[:, :Lp], pm[:Lp]
+            
+            batch_items.append((x4, pm))
+            batch_original_tokens.append(x4[0].tolist())
+            max_len = max(max_len, x4.size(1))
+        
+        # Pad all sequences in batch to same length
+        batch_x4 = []
+        batch_pm = []
+        for x4, pm in batch_items:
+            if x4.size(1) < max_len:
+                pad_len = max_len - x4.size(1)
+                x4 = torch.cat([x4, torch.zeros(4, pad_len, dtype=x4.dtype)], dim=1)
+                pm = torch.cat([pm, torch.zeros(pad_len, dtype=pm.dtype)], dim=1)
+            batch_x4.append(x4)
+            batch_pm.append(pm)
+        
+        # Stack into batch: (B, 4, L)
+        x4_batch = torch.stack(batch_x4).to(device)
+        pm_batch = torch.stack(batch_pm).to(device)
+        
+        # Generate for entire batch at once (PARALLEL on GPU)
+        logger.info(f"Generating {len(batch_indices)} sequences in parallel...")
+        all_generated = []
+        for b_idx in range(len(batch_indices)):
+            generated_tokens = generate_next_tokens(
+                model,
+                prefix_4stream=x4_batch[b_idx:b_idx+1],  # (1, 4, L)
+                pad_mask=pm_batch[b_idx:b_idx+1],         # (1, L)
+                horizon=horizon,
+                top_k=top_k,
+                temperature=temperature,
+                death_id=DEATH_ID,
+                log_every_step=0,  # Suppress per-step logging in batch mode
+                vocab_df=vocab_df,
+                with_category=with_category,
+            )
+            all_generated.append(generated_tokens)
+        
+        # Print results
+        for idx, (seq_idx, original_tokens, generated_tokens) in enumerate(zip(batch_indices, batch_original_tokens, all_generated)):
+            pretty_print_tokens(
+                f"ORIGINAL PREFIX TOKENS (Sequence {seq_idx + 1})",
+                original_tokens,
+                vocab_df,
+                with_category=with_category,
+                out_path=tokens_write_path,
+            )
+            pretty_print_tokens(
+                f"GENERATED TOKENS (Sequence {seq_idx + 1})",
+                generated_tokens,
+                vocab_df,
+                with_category=with_category,
+                out_path=tokens_write_path,
+            )
 
     logger.info("=== Generative Inference: done ===")
 

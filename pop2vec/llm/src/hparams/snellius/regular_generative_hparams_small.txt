@@ -7,19 +7,20 @@ pretrained_model_hparams: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretra
 
 
 # ---- generation controls ----
-horizon: 20                 # max tokens to generate
+horizon: 20                 # max tokens to generate (y tokens)
 top_k: 20                   # 0 = greedy, >0 = top-k sampling
 temperature: 1.0            # sampling temperature
+num_sequences: 50           # number of sequences to generate
 
 # ---- prefix selection ----
 prefix_id: ""             # optional: e.g., "rinpersoon_id"; empty = first sample
-prefix_len: 20                # optional int; blank = use full available prefix
+prefix_len: 20              # number of tokens to use as prefix (x tokens)
 
 # ---- printing / output ----
 with_category: true        # print TOKEN|CATEGORY (true) vs TOKEN only (false)
-tokens_write_path: "/projects/0/prjs1589/stonybrook/llm/gen_out/pretty_tokens_20251117.txt"   # leave blank to only print to stdout
+tokens_write_path: "/projects/0/prjs1589/stonybrook/llm/gen_out/pretty_tokens_20251212.txt"   # leave blank to only print to stdout
 
-# ---- (optional) specials by name if they differ in your vocab)
+# ---- (optional) specials by name if they differ in your vocab
 pad_token: "[PAD]"
 cls_token: "[CLS]"
 death_token: "[DEATH]"
