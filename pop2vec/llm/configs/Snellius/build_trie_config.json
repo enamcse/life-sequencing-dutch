@@ -1,0 +1,11 @@
+{
+    "input_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5",
+    "output_file": "/projects/0/prjs1589/stonybrook/visualize/trie_tree/encoded_trie.csv",
+    "vocab_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv",
+    "lower_limit": 1,
+    "max_nodes": -1,
+    "max_sequences": null,
+    "skip_background": false,
+    "max_seq_len": 512,
+    "mlm_encoded": false
+}
