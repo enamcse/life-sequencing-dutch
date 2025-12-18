@@ -1,0 +1,10 @@
+{
+    "input_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/dryrun_encoded.h5",
+    "output_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded_with_birthdays_dry.h5",
+    "vocab_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv",
+    "max_seq_len": 512,
+    "batch_size": 64,
+    "num_workers": 4,
+    "mlm_encoded": false,
+    "use_gpu": true
+}
