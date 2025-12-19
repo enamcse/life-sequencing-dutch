@@ -16,8 +16,8 @@ Usage:
 Example:
     python pop2vec/llm/scripts/retrofit_ground_truth.py \
         --input /projects/0/prjs1589/stonybrook/llm/gen_out/pretty_tokens_20251212.txt \
-        --output /projects/0/prjs1589/stonybrook/llm/gen_out/pretty_tokens_20251212_gt.txt \
-        --h5_file /projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/dryrun_encoded.h5 \
+        --output /projects/0/prjs1589/stonybrook/llm/gen_out/pretty_tokens_20251212_gt2.txt \
+        --h5_file /projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5 \
         --vocab_path /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
 """
 

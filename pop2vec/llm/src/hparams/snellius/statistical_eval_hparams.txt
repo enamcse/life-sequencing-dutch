@@ -1,0 +1,73 @@
+# Statistical Evaluation Configuration File
+# This file controls the comprehensive statistical evaluation of the generative model
+
+# ===== PATHS =====
+mlm_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5"
+vocab_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv"
+pretrained_model_path: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/model-epoch=00-step=69320-val_loss_track=0.23.ckpt"
+output_dir: "/projects/0/prjs1589/stonybrook/llm/gen_out/statistical_evaluation"
+
+# ===== EVALUATION SCOPE =====
+# Number of real people to evaluate (10-100 recommended, can increase later)
+num_people: 10
+
+# Number of generations per person (for statistical significance)
+# Start with 100, can increase to 1000 based on time
+generations_per_person: 100
+
+# ===== PREFIX PROGRESSION =====
+# Always start with 1 token ([CLS])
+prefix_start: 1
+
+# Jump size between prefix lengths
+# Example: jump=100 gives prefix lengths: 1, 101, 201, 301, ...
+prefix_jump: 100
+
+# ===== GENERATION HORIZONS =====
+# Mode: "single" or "multiple"
+# - single: generate fixed number of tokens (specified by horizon_single)
+# - multiple: generate varying numbers with gaps (20, 40, 60, ... up to horizon_max)
+horizon_mode: "single"
+
+# For single mode: number of tokens to generate
+horizon_single: 20
+
+# For multiple mode: gap between horizons
+horizon_gap: 20
+
+# For multiple mode: maximum horizon
+horizon_max: 200
+
+# ===== MATCHING MODES =====
+# Compute ordered (position-based) matching? (i-th token must match)
+compute_ordered: true
+
+# Compute unordered (set-based) matching? (tokens match regardless of position)
+compute_unordered: true
+
+# ===== CATEGORIZATION =====
+# Use HIGHER_CATEGORY column from vocabulary for aggregated statistics?
+# If true, will compute statistics at both TOKEN and HIGHER_CATEGORY levels
+# If false or HIGHER_CATEGORY doesn't exist, only TOKEN-level stats
+use_higher_category: true
+
+# ===== SAMPLING PARAMETERS =====
+# Top-k sampling (0 = greedy, >0 = sample from top k)
+top_k: 20
+
+# Sampling temperature
+temperature: 1.0
+
+# ===== SPECIAL TOKENS =====
+pad_token: "[PAD]"
+cls_token: "[CLS]"
+death_token: "[DEATH]"
+
+# ===== OUTPUT CONTROL =====
+# Save actual generated token sequences? (Warning: can be very large!)
+save_generated_sequences: false
+
+# Registry mode: "subfolder" or "registry"
+# - subfolder: create separate folder for each run with its config
+# - registry: flat structure with registry.csv mapping run_ids to configs
+registry_mode: "subfolder"

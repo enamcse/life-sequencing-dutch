@@ -1,0 +1,41 @@
+# Statistical Evaluation Configuration - Multiple Horizons Mode
+# This config tests multiple generation horizons (20, 40, 60, ..., 200 tokens)
+
+# ===== PATHS =====
+mlm_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5"
+vocab_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv"
+pretrained_model_path: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/model-epoch=00-step=69320-val_loss_track=0.23.ckpt"
+output_dir: "/projects/0/prjs1589/stonybrook/llm/gen_out/statistical_evaluation_multi_horizon"
+
+# ===== EVALUATION SCOPE =====
+num_people: 20
+generations_per_person: 50  # Fewer generations since we test multiple horizons
+
+# ===== PREFIX PROGRESSION =====
+prefix_start: 1
+prefix_jump: 50  # Smaller jump since we're testing more horizons
+
+# ===== GENERATION HORIZONS (MULTIPLE MODE) =====
+horizon_mode: "multiple"  # Test multiple horizons
+horizon_gap: 20           # Generate 20, 40, 60, 80, ... tokens
+horizon_max: 200          # Up to 200 tokens
+
+# ===== MATCHING MODES =====
+compute_ordered: true
+compute_unordered: true
+
+# ===== CATEGORIZATION =====
+use_higher_category: true
+
+# ===== SAMPLING PARAMETERS =====
+top_k: 20
+temperature: 1.0
+
+# ===== SPECIAL TOKENS =====
+pad_token: "[PAD]"
+cls_token: "[CLS]"
+death_token: "[DEATH]"
+
+# ===== OUTPUT CONTROL =====
+save_generated_sequences: false
+registry_mode: "subfolder"
