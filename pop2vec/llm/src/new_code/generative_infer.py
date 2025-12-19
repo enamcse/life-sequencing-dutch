@@ -221,14 +221,24 @@ def main():
         L_real = int(pm.sum().item())
         x4, pm = x4[:, :L_real], pm[:L_real]
 
+        # Store full sequence for ground truth
+        full_sequence_tokens = x4[0].tolist()
+        
         if "prefix_len" in hp and str(hp["prefix_len"]).strip() not in ("", "None"):
             Lp = min(int(hp["prefix_len"]), x4.size(1))
-            x4, pm = x4[:, :Lp], pm[:Lp]
+            x4_prefix, pm_prefix = x4[:, :Lp], pm[:Lp]
             logger.info(f"Truncated prefix to prefix_len={Lp}")
+            
+            # Extract ground truth continuation (the tokens AFTER the prefix)
+            ground_truth_continuation = full_sequence_tokens[Lp:Lp+horizon]
+        else:
+            x4_prefix, pm_prefix = x4, pm
+            Lp = x4.size(1)
+            ground_truth_continuation = []  # No ground truth if using full sequence as prefix
 
-        original_tokens = x4[0].tolist()
+        prefix_tokens = x4_prefix[0].tolist()
 
-        x4_b, pm_b = x4.unsqueeze(0).to(device), pm.unsqueeze(0).to(device)
+        x4_b, pm_b = x4_prefix.unsqueeze(0).to(device), pm_prefix.unsqueeze(0).to(device)
         generated_tokens = generate_next_tokens(
             model,
             prefix_4stream=x4_b,
@@ -241,13 +251,27 @@ def main():
             vocab_df=vocab_df,
             with_category=with_category,
         )
+        
+        # Print prefix
         pretty_print_tokens(
             f"ORIGINAL PREFIX TOKENS (Sequence {seq_idx + 1})",
-            original_tokens,
+            prefix_tokens,
             vocab_df,
             with_category=with_category,
             out_path=tokens_write_path,
         )
+        
+        # Print ground truth continuation (if available)
+        if ground_truth_continuation:
+            pretty_print_tokens(
+                f"GROUND TRUTH CONTINUATION (Sequence {seq_idx + 1})",
+                ground_truth_continuation,
+                vocab_df,
+                with_category=with_category,
+                out_path=tokens_write_path,
+            )
+        
+        # Print generated continuation
         pretty_print_tokens(
             f"GENERATED TOKENS (Sequence {seq_idx + 1})",
             generated_tokens,

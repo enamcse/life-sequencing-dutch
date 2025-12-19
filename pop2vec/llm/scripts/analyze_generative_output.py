@@ -42,8 +42,8 @@ def parse_line(line: str) -> Tuple[str, int, List[Tuple[str, str]]]:
     if len(parts) < 3:
         return None, None, None
     
-    # Extract type and sequence number
-    match = re.match(r'(ORIGINAL|GENERATED).*\(Sequence (\d+)\)', parts[0])
+    # Extract type and sequence number - now supporting PREFIX, GROUND TRUTH, and GENERATED
+    match = re.match(r'(ORIGINAL PREFIX|GROUND TRUTH CONTINUATION|GENERATED).*\(Sequence (\d+)\)', parts[0])
     if not match:
         return None, None, None
     
@@ -70,7 +70,7 @@ def load_sequences(input_file: str) -> Dict[int, Dict[str, List[Tuple[str, str]]
     Load sequences from file.
     
     Returns:
-        {sequence_num: {'ORIGINAL': [...], 'GENERATED': [...]}}
+        {sequence_num: {'ORIGINAL PREFIX': [...], 'GROUND TRUTH CONTINUATION': [...], 'GENERATED': [...]}}
     """
     sequences = defaultdict(dict)
     
@@ -137,43 +137,59 @@ def compute_diversity_metrics(tokens: List[Tuple[str, str]]) -> Dict:
 def analyze_sequences(sequences: Dict[int, Dict[str, List[Tuple[str, str]]]]) -> Dict:
     """
     Perform comprehensive analysis on all sequences.
+    Now compares GENERATED vs GROUND TRUTH CONTINUATION (not prefix).
     """
     results = {
         'num_sequences': len(sequences),
         'generated_category_dist': Counter(),
-        'original_category_dist': Counter(),
+        'ground_truth_category_dist': Counter(),
         'token_match_rates': [],
         'category_match_rates': [],
         'per_sequence_stats': [],
         'diversity_stats': [],
         'category_specific_matches': defaultdict(lambda: {'correct': 0, 'total': 0}),
+        'sequences_with_ground_truth': 0,
+        'sequences_without_ground_truth': 0,
     }
     
     for seq_num in sorted(sequences.keys()):
         seq_data = sequences[seq_num]
         
-        if 'ORIGINAL' not in seq_data or 'GENERATED' not in seq_data:
+        if 'GENERATED' not in seq_data:
             continue
         
-        original = seq_data['ORIGINAL']
         generated = seq_data['GENERATED']
+        
+        # Check if we have ground truth continuation (not just prefix)
+        ground_truth = seq_data.get('GROUND TRUTH CONTINUATION', None)
+        
+        if ground_truth is None:
+            # Fallback: warn user and skip match rate calculations
+            results['sequences_without_ground_truth'] += 1
+            # Still compute diversity on generated
+            diversity = compute_diversity_metrics(generated)
+            results['diversity_stats'].append(diversity)
+            results['generated_category_dist'].update(compute_category_distribution(generated))
+            continue
+        
+        results['sequences_with_ground_truth'] += 1
         
         # Category distribution
         results['generated_category_dist'].update(compute_category_distribution(generated))
-        results['original_category_dist'].update(compute_category_distribution(original))
+        results['ground_truth_category_dist'].update(compute_category_distribution(ground_truth))
         
-        # Match rates
-        token_match = compute_token_match_rate(original, generated)
-        category_match = compute_category_match_rate(original, generated)
+        # Match rates (GENERATED vs GROUND TRUTH)
+        token_match = compute_token_match_rate(ground_truth, generated)
+        category_match = compute_category_match_rate(ground_truth, generated)
         results['token_match_rates'].append(token_match)
         results['category_match_rates'].append(category_match)
         
         # Category-specific matches
-        for (o_token, o_cat), (g_token, g_cat) in zip(original, generated):
-            if o_cat is not None:
-                results['category_specific_matches'][o_cat]['total'] += 1
-                if o_token == g_token:
-                    results['category_specific_matches'][o_cat]['correct'] += 1
+        for (gt_token, gt_cat), (g_token, g_cat) in zip(ground_truth, generated):
+            if gt_cat is not None:
+                results['category_specific_matches'][gt_cat]['total'] += 1
+                if gt_token == g_token:
+                    results['category_specific_matches'][gt_cat]['correct'] += 1
         
         # Diversity
         diversity = compute_diversity_metrics(generated)
@@ -182,7 +198,7 @@ def analyze_sequences(sequences: Dict[int, Dict[str, List[Tuple[str, str]]]]) ->
         # Per-sequence stats
         results['per_sequence_stats'].append({
             'sequence_num': seq_num,
-            'original_len': len(original),
+            'ground_truth_len': len(ground_truth),
             'generated_len': len(generated),
             'token_match_rate': token_match,
             'category_match_rate': category_match,
@@ -196,6 +212,7 @@ def analyze_sequences(sequences: Dict[int, Dict[str, List[Tuple[str, str]]]]) ->
 def plot_category_distribution(category_dist: Counter, title: str, output_path: str):
     """Plot category distribution as a bar chart."""
     if not category_dist:
+        print(f"Warning: No data to plot for {title}")
         return
     
     # Get top 30 categories
@@ -277,12 +294,14 @@ def save_summary(results: Dict, output_path: str):
     """Save summary statistics to JSON."""
     summary = {
         'num_sequences': results['num_sequences'],
+        'sequences_with_ground_truth': results['sequences_with_ground_truth'],
+        'sequences_without_ground_truth': results['sequences_without_ground_truth'],
         'mean_token_match_rate': float(np.mean(results['token_match_rates'])) if results['token_match_rates'] else 0,
         'std_token_match_rate': float(np.std(results['token_match_rates'])) if results['token_match_rates'] else 0,
         'mean_category_match_rate': float(np.mean(results['category_match_rates'])) if results['category_match_rates'] else 0,
         'std_category_match_rate': float(np.std(results['category_match_rates'])) if results['category_match_rates'] else 0,
         'top_20_generated_categories': dict(results['generated_category_dist'].most_common(20)),
-        'top_20_original_categories': dict(results['original_category_dist'].most_common(20)),
+        'top_20_ground_truth_categories': dict(results['ground_truth_category_dist'].most_common(20)),
         'category_specific_match_rates': {
             cat: stats['correct'] / stats['total'] if stats['total'] > 0 else 0
             for cat, stats in results['category_specific_matches'].items()
@@ -338,9 +357,9 @@ def main():
     )
     
     plot_category_distribution(
-        results['original_category_dist'],
-        'Original Token Category Distribution (Top 30)',
-        os.path.join(args.output_dir, 'original_category_dist.png')
+        results['ground_truth_category_dist'],
+        'Ground Truth Continuation Category Distribution (Top 30)',
+        os.path.join(args.output_dir, 'ground_truth_category_dist.png')
     )
     
     if results['token_match_rates']:
@@ -366,11 +385,17 @@ def main():
     print(f"\nAnalysis complete! Results saved to: {args.output_dir}")
     print(f"\nQuick Summary:")
     print(f"  - Sequences analyzed: {results['num_sequences']}")
-    print(f"  - Mean token match rate: {np.mean(results['token_match_rates']):.3f}")
-    print(f"  - Mean category match rate: {np.mean(results['category_match_rates']):.3f}")
+    print(f"  - Sequences with ground truth: {results['sequences_with_ground_truth']}")
+    print(f"  - Sequences without ground truth: {results['sequences_without_ground_truth']}")
+    if results['token_match_rates']:
+        print(f"  - Mean token match rate: {np.mean(results['token_match_rates']):.3f}")
+        print(f"  - Mean category match rate: {np.mean(results['category_match_rates']):.3f}")
     if results['diversity_stats']:
         print(f"  - Mean unique token ratio: {np.mean([d['unique_ratio'] for d in results['diversity_stats']]):.3f}")
         print(f"  - Mean repeat ratio: {np.mean([d['repeat_ratio'] for d in results['diversity_stats']]):.3f}")
+    if results['sequences_without_ground_truth'] > 0:
+        print(f"\n⚠️  WARNING: {results['sequences_without_ground_truth']} sequences have no ground truth continuation.")
+        print(f"    Match rates are only computed for sequences with ground truth.")
 
 
 if __name__ == "__main__":
