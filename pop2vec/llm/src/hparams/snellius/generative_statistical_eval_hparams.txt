@@ -46,9 +46,12 @@ compute_ordered: true
 compute_unordered: true
 
 # ===== CATEGORIZATION =====
+# Use CATEGORY column from vocabulary for token-category statistics?
+use_category: true
+
 # Use HIGHER_CATEGORY column from vocabulary for aggregated statistics?
-# If true, will compute statistics at both TOKEN and HIGHER_CATEGORY levels
-# If false or HIGHER_CATEGORY doesn't exist, only TOKEN-level stats
+# If true, will compute statistics at both CATEGORY and HIGHER_CATEGORY levels
+# If false or HIGHER_CATEGORY doesn't exist, only CATEGORY-level stats
 use_higher_category: true
 
 # ===== SAMPLING PARAMETERS =====
@@ -64,8 +67,20 @@ cls_token: "[CLS]"
 death_token: "[DEATH]"
 
 # ===== OUTPUT CONTROL =====
-# Save actual generated token sequences? (Warning: can be very large!)
-save_generated_sequences: false
+# Save actual generated token sequences?
+save_generated_sequences: true
+
+# Save sequences in token_id format? (e.g., "123,456,789")
+save_token_id_format: true
+
+# Save sequences in token format? (e.g., "gender_1,AGE_25,income_high")
+save_token_format: true
+
+# Save sequences in category format? (e.g., "BACKGROUND,AGE,INCOME")
+save_category_format: true
+
+# Save sequences in higher_category format? (e.g., "DEMOGRAPHICS,DEMOGRAPHICS,FINANCIAL")
+save_higher_category_format: true
 
 # Registry mode: "subfolder" or "registry"
 # - subfolder: create separate folder for each run with its config
