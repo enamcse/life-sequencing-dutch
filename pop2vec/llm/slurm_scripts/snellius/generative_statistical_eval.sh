@@ -16,12 +16,12 @@ date
 cd ~/life-sequencing-dutch/
 source requirements/load_venv.sh
 
-HP="pop2vec/llm/src/hparams/snellius/statistical_eval_hparams.txt"
+HP="pop2vec/llm/src/hparams/snellius/generative_statistical_eval_hparams.txt"
 
 echo "Running statistical evaluation with config: $HP"
 date
 
-python ~/life-sequencing-dutch/pop2vec/llm/scripts/statistical_evaluation.py \
+python ~/life-sequencing-dutch/pop2vec/llm/src/new_code/generative_statistical_evaluation.py \
     --hparams $HP
 
 date

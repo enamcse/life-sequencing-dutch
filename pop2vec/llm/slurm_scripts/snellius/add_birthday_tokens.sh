@@ -1,9 +1,9 @@
 #!/bin/bash
 #
 #SBATCH --job-name=add_birthday_tokens
-#SBATCH --ntasks-per-node=2
+#SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --time=24:00:00
 #SBATCH --mem=128G
 #SBATCH -p gpu_h100

@@ -20,8 +20,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-# Import existing dataset class
-from pop2vec.llm.src.new_code.load_data import CustomLazyHDF5Dataset
+# Import optimized dataset class for preprocessing
+from pop2vec.llm.src.new_code.load_data import PreprocessingLazyHDF5Dataset
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -571,7 +571,7 @@ def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_l
             return sample
     
     # Create dataset for this worker (each worker gets its own HDF5 handle)
-    dataset = CustomLazyHDF5Dataset(
+    dataset = PreprocessingLazyHDF5Dataset(
         input_path,
         inference=True,
         mlm_encoded=mlm_encoded,  # Use configurable value
@@ -681,7 +681,7 @@ def process_file(
     
     # Step 1: Scan all data to find unique ages (pre-processing step)
     logger.info("Step 1: Scanning data to find all unique ages...")
-    dataset = CustomLazyHDF5Dataset(
+    dataset = PreprocessingLazyHDF5Dataset(
         input_path,
         inference=True,
         mlm_encoded=mlm_encoded,

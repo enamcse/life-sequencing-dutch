@@ -885,3 +885,36 @@ class FineTuneLazyDataset(Dataset):
                 self._h5.close()
         except Exception:
             pass
+
+class PreprocessingLazyHDF5Dataset(CustomLazyHDF5Dataset):
+    """
+    Optimized variant of CustomLazyHDF5Dataset for high-throughput parallel reading
+    during preprocessing tasks (e.g., birthday token insertion).
+    
+    Key optimizations:
+    - No SWMR mode (avoids file locking contention)
+    - Large read cache (1GB per worker)
+    - Optimized for many parallel readers on shared filesystems
+    
+    Use this for one-time preprocessing tasks with many workers.
+    For normal training/inference, use CustomLazyHDF5Dataset.
+    """
+    
+    def _get_handle(self) -> h5py.File:
+        """
+        Open HDF5 file with optimized settings for parallel preprocessing.
+        
+        Optimizations:
+        - No SWMR: Avoids file system locking contention
+        - Large cache: 1GB per worker reduces repeated disk reads
+        - Prime cache slots: Better hash distribution
+        """
+        if self._h5 is None:
+            self._h5 = h5py.File(
+                self.file_path,
+                mode="r",
+                rdcc_nbytes=1024**3,      # 1GB read cache per worker
+                rdcc_nslots=10007,         # Prime number for cache slots
+                rdcc_w0=0.75,              # Cache eviction policy (0.75 = aggressive caching)
+            )
+        return self._h5
