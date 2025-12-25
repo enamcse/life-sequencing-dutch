@@ -132,7 +132,8 @@ def load_experiment_config(exp_name: str, base_dir: Path) -> dict:
 
 
 def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None, 
-                             exclude_padding: bool = True) -> dict:
+                             exclude_padding: bool = True,
+                             generation_batch_size: int = 64) -> dict:
     """Create experiment configuration from parameters."""
     if name is None:
         name = f"exp_n{n}_c{c}_h{h}_g{g}"
@@ -152,6 +153,7 @@ def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None,
         'prefix_gap': g,
         'prefix_lengths': prefix_lengths,
         'exclude_padding': exclude_padding,
+        'generation_batch_size': generation_batch_size,
         'top_k': 20,
         'temperature': 1.0,
         'seed': 42,
@@ -353,6 +355,7 @@ def generate_from_config(
             g=exp_def['g'],
             name=exp_def.get('name'),
             exclude_padding=exp_def.get('exclude_padding', True),
+            generation_batch_size=exp_def.get('generation_batch_size', 64),
         )
         
         # Allow experiment-specific overrides
@@ -363,7 +366,7 @@ def generate_from_config(
         
         print(f"\nExperiment: {exp_config['experiment_name']}")
         print(f"  n={exp_def['n']}, c={exp_def['c']}, h={exp_def['h']}, g={exp_def['g']}")
-        print(f"  exclude_padding={exp_config['exclude_padding']}")
+        print(f"  exclude_padding={exp_config['exclude_padding']}, batch_size={exp_config['generation_batch_size']}")
         print("-" * 40)
         
         scripts = generate_slurm_scripts(

@@ -69,6 +69,9 @@ class GenerationConfig:
     # Padding exclusion mode: 'none' (use full sequence), 'exclude' (truncate at PAD)
     exclude_padding: bool = True
     
+    # Batch size for generation (higher = better GPU utilization, but more memory)
+    generation_batch_size: int = 64
+    
     # Sampling
     top_k: int = 20
     temperature: float = 1.0
@@ -208,43 +211,122 @@ class SequenceGenerator:
         return selected, buddies
     
     @torch.no_grad()
+    def _generate_tokens_batch(
+        self,
+        prefixes_4stream: List[torch.Tensor],
+        pad_masks: List[torch.Tensor],
+        horizon: int,
+        batch_size: int = 32,
+    ) -> List[List[int]]:
+        """
+        Generate tokens for multiple sequences in batches.
+        
+        Args:
+            prefixes_4stream: List of prefix tensors, each (4, prefix_len)
+            pad_masks: List of padding masks, each (prefix_len,)
+            horizon: Number of tokens to generate
+            batch_size: Number of sequences to process in parallel
+        
+        Returns:
+            List of generated token sequences
+        """
+        all_results = []
+        n_sequences = len(prefixes_4stream)
+        
+        for batch_start in range(0, n_sequences, batch_size):
+            batch_end = min(batch_start + batch_size, n_sequences)
+            batch_prefixes = prefixes_4stream[batch_start:batch_end]
+            batch_masks = pad_masks[batch_start:batch_end]
+            
+            # Pad sequences to same length for batching
+            max_prefix_len = max(p.size(1) for p in batch_prefixes)
+            
+            batch_x = []
+            batch_pm = []
+            
+            for prefix, mask in zip(batch_prefixes, batch_masks):
+                curr_len = prefix.size(1)
+                if curr_len < max_prefix_len:
+                    # Pad on the left with PAD tokens
+                    pad_len = max_prefix_len - curr_len
+                    pad_tokens = torch.full((4, pad_len), self.pad_id, dtype=torch.long)
+                    padded_prefix = torch.cat([pad_tokens, prefix], dim=1)
+                    padded_mask = torch.cat([torch.zeros(pad_len, dtype=torch.long), mask])
+                else:
+                    padded_prefix = prefix
+                    padded_mask = mask
+                
+                batch_x.append(padded_prefix)
+                batch_pm.append(padded_mask)
+            
+            # Stack into batches: (B, 4, L) and (B, L)
+            x = torch.stack(batch_x).to(self.device)
+            pm = torch.stack(batch_pm).to(self.device)
+            
+            B = x.size(0)
+            
+            # Track which sequences are still active (haven't hit DEATH)
+            active = torch.ones(B, dtype=torch.bool, device=self.device)
+            out_tokens = [[] for _ in range(B)]
+            
+            for step in range(horizon):
+                if not active.any():
+                    break
+                
+                # Forward pass for all active sequences
+                logits = self.model({"input_ids": x, "padding_mask": pm})
+                last_logits = logits[:, -1, :] / max(1e-8, self.config.temperature)
+                
+                # Top-k sampling
+                if self.config.top_k > 0:
+                    vals, idxs = torch.topk(last_logits, k=self.config.top_k, dim=-1)
+                    probs = softmax(vals, dim=-1)
+                    sampled_idx = torch.multinomial(probs, 1)
+                    next_tokens = idxs.gather(-1, sampled_idx).squeeze(-1)
+                else:
+                    next_tokens = torch.argmax(last_logits, dim=-1)
+                
+                # Store tokens for active sequences
+                for i in range(B):
+                    if active[i]:
+                        tid = int(next_tokens[i].item())
+                        out_tokens[i].append(tid)
+                        
+                        # Check for DEATH token
+                        if self.death_id is not None and tid == self.death_id:
+                            active[i] = False
+                
+                # Extend sequences for next step (only if we have more steps)
+                if step < horizon - 1 and active.any():
+                    # Get last age and day from current sequences
+                    last_ages = x[:, 1, -1]
+                    last_days = x[:, 2, -1]
+                    
+                    # Build new step: (B, 4, 1)
+                    new_step = torch.stack([
+                        next_tokens,
+                        last_ages,
+                        last_days,
+                        torch.ones(B, dtype=torch.long, device=self.device)
+                    ], dim=1).unsqueeze(2)
+                    
+                    x = torch.cat([x, new_step], dim=2)
+                    pm = torch.cat([pm, torch.ones(B, 1, dtype=pm.dtype, device=self.device)], dim=1)
+            
+            all_results.extend(out_tokens)
+        
+        return all_results
+    
+    @torch.no_grad()
     def _generate_tokens(
         self,
         prefix_4stream: torch.Tensor,
         pad_mask: torch.Tensor,
         horizon: int
     ) -> List[int]:
-        """Generate tokens autoregressively."""
-        x = prefix_4stream.unsqueeze(0).to(self.device)
-        pm = pad_mask.unsqueeze(0).to(self.device)
-        out_tokens = []
-        
-        for _ in range(horizon):
-            logits = self.model({"input_ids": x, "padding_mask": pm})
-            last_logits = logits[:, -1, :] / max(1e-8, self.config.temperature)
-            
-            if self.config.top_k > 0:
-                vals, idxs = torch.topk(last_logits, k=self.config.top_k, dim=-1)
-                probs = softmax(vals, dim=-1)
-                next_token = idxs.gather(-1, torch.multinomial(probs, 1)).squeeze(-1)
-            else:
-                next_token = torch.argmax(last_logits, dim=-1)
-            
-            tid = int(next_token.item())
-            out_tokens.append(tid)
-            
-            if self.death_id is not None and tid == self.death_id:
-                break
-            
-            # Extend sequence
-            last_age = x[0, 1, -1].item()
-            last_day = x[0, 2, -1].item()
-            new_step = torch.tensor([[tid], [last_age], [last_day], [1]],
-                                   dtype=torch.long, device=self.device)
-            x = torch.cat([x, new_step.unsqueeze(0)], dim=2)
-            pm = torch.cat([pm, torch.ones(1, 1, dtype=pm.dtype, device=self.device)], dim=1)
-        
-        return out_tokens
+        """Generate tokens autoregressively (single sequence, for compatibility)."""
+        result = self._generate_tokens_batch([prefix_4stream], [pad_mask], horizon, batch_size=1)
+        return result[0]
     
     def _save_original_sequences(
         self,
@@ -310,6 +392,11 @@ class SequenceGenerator:
         c = self.config.num_generations
         h = self.config.horizon
         
+        # Batch size for GPU generation
+        # Adjust based on GPU memory - H100 can handle large batches
+        generation_batch_size = self.config.generation_batch_size
+        logger.info(f"Generation batch size: {generation_batch_size}")
+        
         # Select people
         selected_indices, buddy_indices = self._select_people()
         logger.info(f"Selected {len(selected_indices)} people with buddies")
@@ -332,7 +419,12 @@ class SequenceGenerator:
         for prefix_len in tqdm(self.config.prefix_lengths, desc="Prefix lengths"):
             logger.info(f"Processing prefix_len={prefix_len}")
             
-            for person_idx, person in enumerate(tqdm(people_data, desc=f"Prefix {prefix_len}", leave=False)):
+            # Collect all generation tasks for this prefix length
+            # Each task = (person_idx, prefix_4stream, prefix_mask, buddy)
+            generation_tasks = []
+            task_metadata = []  # Store metadata for each task
+            
+            for person_idx, person in enumerate(people_data):
                 # Skip if sequence too short
                 if prefix_len + h > person['L_real']:
                     continue
@@ -345,20 +437,38 @@ class SequenceGenerator:
                 prefix_4stream = x4[:, :prefix_len]
                 prefix_mask = pm[:prefix_len]
                 
-                # Generate c times
+                # Add c copies of this prefix for c generations
                 for gen_idx in range(c):
-                    generated_tokens = self._generate_tokens(prefix_4stream, prefix_mask, h)
-                    
-                    records.append({
+                    generation_tasks.append((prefix_4stream.clone(), prefix_mask.clone()))
+                    task_metadata.append({
                         'person_idx': person_idx,
                         'rinpersoon_id': person['rinpersoon_id'],
-                        'buddy_idx': person_idx,  # buddy's local index (same as person_idx for pairing)
+                        'buddy_idx': person_idx,
                         'buddy_rinpersoon_id': buddy['rinpersoon_id'],
                         'prefix_len': prefix_len,
                         'generation_idx': gen_idx,
-                        'generated_tokens': ','.join(map(str, generated_tokens)),
-                        'generated_len': len(generated_tokens),
                     })
+            
+            if not generation_tasks:
+                continue
+            
+            logger.info(f"  Generating {len(generation_tasks)} sequences in batches of {generation_batch_size}")
+            
+            # Batch generate all sequences
+            prefixes = [t[0] for t in generation_tasks]
+            masks = [t[1] for t in generation_tasks]
+            
+            generated_sequences = self._generate_tokens_batch(
+                prefixes, masks, h, batch_size=generation_batch_size
+            )
+            
+            # Store results
+            for i, (gen_tokens, meta) in enumerate(zip(generated_sequences, task_metadata)):
+                records.append({
+                    **meta,
+                    'generated_tokens': ','.join(map(str, gen_tokens)),
+                    'generated_len': len(gen_tokens),
+                })
         
         logger.info(f"Generated {len(records)} records")
         
@@ -422,6 +532,7 @@ def load_config(config_path: str) -> GenerationConfig:
         horizon=cfg.get('horizon', 20),
         prefix_lengths=cfg.get('prefix_lengths'),
         exclude_padding=cfg.get('exclude_padding', True),
+        generation_batch_size=cfg.get('generation_batch_size', 64),
         top_k=cfg.get('top_k', 20),
         temperature=cfg.get('temperature', 1.0),
         pad_token=cfg.get('pad_token', '[PAD]'),
