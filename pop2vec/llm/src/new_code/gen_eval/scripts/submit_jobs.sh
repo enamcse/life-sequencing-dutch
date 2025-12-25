@@ -86,32 +86,60 @@ if [[ -z "$GEN_SCRIPTS" && -z "$STATS_SCRIPTS" ]]; then
     exit 1
 fi
 
+# Associative array to track generation job IDs by script name
+declare -A GEN_JOB_IDS
+
 # Submit generation jobs
 if [[ "$STATS_ONLY" != "true" && -n "$GEN_SCRIPTS" ]]; then
     echo "Generation Jobs:"
     echo "-----------------"
     for script in $GEN_SCRIPTS; do
+        script_basename=$(basename "$script")
+        # Create the corresponding stats script name by replacing gen_ with stats_
+        stats_script_name=${script_basename/gen_/stats_}
+        
         if [[ "$DRY_RUN" == "true" ]]; then
             echo "[DRY RUN] sbatch $script"
+            # Use a fake job ID for dry run
+            GEN_JOB_IDS["$stats_script_name"]="DRY_RUN_ID"
         else
-            echo "Submitting: $(basename $script)"
+            echo "Submitting: $script_basename"
             JOB_ID=$(sbatch "$script" | awk '{print $4}')
             echo "  Job ID: $JOB_ID"
+            GEN_JOB_IDS["$stats_script_name"]="$JOB_ID"
         fi
     done
     echo ""
 fi
 
-# Submit statistics jobs
+# Submit statistics jobs (with dependency on generation jobs if applicable)
 if [[ "$GEN_ONLY" != "true" && -n "$STATS_SCRIPTS" ]]; then
     echo "Statistics Jobs:"
     echo "-----------------"
     for script in $STATS_SCRIPTS; do
-        if [[ "$DRY_RUN" == "true" ]]; then
-            echo "[DRY RUN] sbatch $script"
+        script_basename=$(basename "$script")
+        
+        # Check if we have a corresponding generation job ID
+        DEP_ARG=""
+        if [[ -n "${GEN_JOB_IDS[$script_basename]:-}" && "${GEN_JOB_IDS[$script_basename]}" != "DRY_RUN_ID" ]]; then
+            DEP_ARG="--dependency=afterok:${GEN_JOB_IDS[$script_basename]}"
+            echo "Submitting: $script_basename (depends on gen job ${GEN_JOB_IDS[$script_basename]})"
         else
-            echo "Submitting: $(basename $script)"
-            JOB_ID=$(sbatch "$script" | awk '{print $4}')
+            echo "Submitting: $script_basename"
+        fi
+        
+        if [[ "$DRY_RUN" == "true" ]]; then
+            if [[ -n "$DEP_ARG" ]]; then
+                echo "[DRY RUN] sbatch $DEP_ARG $script"
+            else
+                echo "[DRY RUN] sbatch $script"
+            fi
+        else
+            if [[ -n "$DEP_ARG" ]]; then
+                JOB_ID=$(sbatch $DEP_ARG "$script" | awk '{print $4}')
+            else
+                JOB_ID=$(sbatch "$script" | awk '{print $4}')
+            fi
             echo "  Job ID: $JOB_ID"
         fi
     done
