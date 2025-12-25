@@ -2,17 +2,15 @@
 """
 Generate Sequences (GPU Phase)
 
-Generates token sequences from prefixes and saves them to a single Parquet file.
+Generates token sequences from prefixes and saves them to Parquet files.
 This script is GPU-intensive and saves raw data for later statistical analysis.
 
-Output: Single Parquet file with columns:
-    - person_idx: Index of the person (0 to n-1)
-    - prefix_len: Prefix length
-    - generation_idx: Generation index (0 to c-1)
-    - original_tokens: List of original continuation tokens
-    - generated_tokens: List of generated tokens
-    - buddy_tokens: Tokens from buddy (random pair)
-    - next_tokens: Tokens from person (i+1) mod n
+Outputs:
+    1. original_sequences.parquet - All original sequences (n persons + n buddies)
+       Columns: idx, rinpersoon_id, original_sequence
+    2. generated_sequences.parquet - Generated sequences with metadata
+       Columns: person_idx, rinpersoon_id, buddy_rinpersoon_id, prefix_len, generation_idx, 
+                generated_tokens, original_len, generated_len
 
 Usage:
     python generate_sequences.py --config run_config.yaml
@@ -26,20 +24,20 @@ import os
 import time
 import torch
 import yaml
-from collections import defaultdict
-from dataclasses import dataclass
+import h5py
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from tqdm import tqdm
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pandas as pd
 
 from torch.nn.functional import softmax
 
 # Project imports
 from pop2vec.llm.src.new_code.utils import load_special_ids, load_vocab_df
-from pop2vec.llm.src.new_code.load_data import CustomLazyHDF5Dataset
 from pop2vec.llm.src.transformer.models import TransformerEncoder
 
 # Logging
@@ -68,6 +66,9 @@ class GenerationConfig:
     horizon: int = 20
     prefix_lengths: List[int] = None
     
+    # Padding exclusion mode: 'none' (use full sequence), 'exclude' (truncate at PAD)
+    exclude_padding: bool = True
+    
     # Sampling
     top_k: int = 20
     temperature: float = 1.0
@@ -86,7 +87,7 @@ class GenerationConfig:
 
 
 class SequenceGenerator:
-    """GPU-based sequence generator."""
+    """GPU-based sequence generator using direct h5 access."""
     
     def __init__(self, config: GenerationConfig):
         self.config = config
@@ -120,6 +121,7 @@ class SequenceGenerator:
         self.cls_id = specials["cls_id"]
         self.death_id = specials["death_id"]
         logger.info(f"Special tokens: PAD={self.pad_id}, CLS={self.cls_id}, DEATH={self.death_id}")
+        logger.info(f"Padding exclusion: {config.exclude_padding}")
         
         # Load model
         logger.info(f"Loading model: {config.checkpoint_path}")
@@ -129,21 +131,70 @@ class SequenceGenerator:
         )
         self.model.eval().to(self.device)
         
-        # Load dataset
-        logger.info(f"Loading dataset: {config.data_path}")
-        self.dataset = CustomLazyHDF5Dataset(
-            config.data_path,
-            validation=False,
-            num_val_items=100000,
-            mlm_encoded=False,
-            inference=True,
-        )
-        logger.info(f"Dataset size: {len(self.dataset)}")
+        # Open h5 file directly - only use 'input_ids' and 'sequence_id' keys
+        logger.info(f"Opening h5 file: {config.data_path}")
+        self.h5_file = h5py.File(config.data_path, 'r', libver='latest', swmr=True)
+        self.dataset_size = self.h5_file['input_ids'].shape[0]
+        self.max_seq_len = self.h5_file['input_ids'].shape[2]  # shape: (N, 4, L)
+        logger.info(f"Dataset size: {self.dataset_size}, max_seq_len: {self.max_seq_len}")
+    
+    def __del__(self):
+        """Close h5 file on cleanup."""
+        if hasattr(self, 'h5_file') and self.h5_file is not None:
+            try:
+                self.h5_file.close()
+            except Exception:
+                pass
+    
+    def _find_real_length(self, tokens: np.ndarray) -> int:
+        """
+        Find real sequence length by looking for first PAD token.
+        
+        Args:
+            tokens: 1D array of token IDs (stream 0 from input_ids)
+        
+        Returns:
+            Length of real tokens (before padding starts)
+        """
+        if not self.config.exclude_padding:
+            return len(tokens)
+        
+        pad_positions = np.where(tokens == self.pad_id)[0]
+        if len(pad_positions) > 0:
+            return int(pad_positions[0])
+        return len(tokens)
+    
+    def _load_person_data(self, idx: int) -> Dict:
+        """
+        Load a person's data directly from h5 file.
+        Only uses 'input_ids' and 'sequence_id' keys.
+        """
+        # input_ids shape: (4, L) for this person
+        input_ids = self.h5_file['input_ids'][idx]  # (4, L)
+        sequence_id = self.h5_file['sequence_id'][idx]  # rinpersoon_id
+        
+        # Convert to tensors
+        x4 = torch.as_tensor(input_ids, dtype=torch.long)  # (4, L)
+        
+        # Find real length from token stream (stream 0)
+        L_real = self._find_real_length(input_ids[0])
+        
+        # Create padding mask from real length (1=real, 0=pad)
+        pm = torch.ones(L_real, dtype=torch.long)
+        
+        return {
+            'idx': int(idx),
+            'x4': x4[:, :L_real],
+            'pm': pm,
+            'L_real': L_real,
+            'rinpersoon_id': int(sequence_id),
+            'full_sequence': input_ids[0].tolist(),  # Store full original sequence for saving
+        }
     
     def _select_people(self) -> Tuple[np.ndarray, np.ndarray]:
         """Select n people and their random buddies."""
         n = self.config.num_people
-        total = len(self.dataset)
+        total = self.dataset_size
         
         # Select main people
         selected = np.random.choice(total, size=min(n, total), replace=False)
@@ -155,21 +206,6 @@ class SequenceGenerator:
                 buddies[i] = np.random.randint(0, total)
         
         return selected, buddies
-    
-    def _load_person_data(self, idx: int) -> Dict:
-        """Load and preprocess a person's sequence."""
-        item = self.dataset[idx]
-        x4 = item["input_ids"]
-        pm = item["padding_mask"]
-        L_real = int(pm.sum().item())
-        
-        return {
-            'idx': int(idx),
-            'x4': x4[:, :L_real],
-            'pm': pm[:L_real],
-            'L_real': L_real,
-            'rinpersoon_id': item.get('rinpersoon_id', int(idx)),
-        }
     
     @torch.no_grad()
     def _generate_tokens(
@@ -210,10 +246,63 @@ class SequenceGenerator:
         
         return out_tokens
     
+    def _save_original_sequences(
+        self,
+        people_data: List[Dict],
+        buddy_data: List[Dict],
+        selected_indices: np.ndarray,
+        buddy_indices: np.ndarray,
+    ) -> str:
+        """
+        Save original sequences to Parquet file.
+        
+        Creates original_sequences.parquet with columns:
+        - local_idx: 0 to n-1 for persons, n to 2n-1 for buddies
+        - h5_idx: Original index in h5 file
+        - rinpersoon_id: sequence_id from h5 file
+        - original_sequence: Full token sequence from input_ids[idx, 0, :]
+        """
+        records = []
+        
+        # Add persons (indices 0 to n-1)
+        for local_idx, person in enumerate(people_data):
+            records.append({
+                'local_idx': local_idx,
+                'h5_idx': person['idx'],
+                'rinpersoon_id': person['rinpersoon_id'],
+                'original_sequence': ','.join(map(str, person['full_sequence'])),
+                'real_length': person['L_real'],
+                'is_buddy': False,
+            })
+        
+        # Add buddies (indices n to 2n-1)
+        n = len(people_data)
+        for local_idx, buddy in enumerate(buddy_data):
+            records.append({
+                'local_idx': n + local_idx,
+                'h5_idx': buddy['idx'],
+                'rinpersoon_id': buddy['rinpersoon_id'],
+                'original_sequence': ','.join(map(str, buddy['full_sequence'])),
+                'real_length': buddy['L_real'],
+                'is_buddy': True,
+            })
+        
+        # Save to Parquet
+        df = pd.DataFrame(records)
+        original_path = os.path.join(self.config.output_dir, 'original_sequences.parquet')
+        table = pa.Table.from_pandas(df)
+        pq.write_table(table, original_path)
+        
+        logger.info(f"Saved original sequences: {original_path}")
+        logger.info(f"  Persons: {len(people_data)}, Buddies: {len(buddy_data)}")
+        
+        return original_path
+    
     def generate(self):
-        """Run sequence generation and save to Parquet."""
+        """Run sequence generation and save to Parquet files."""
         logger.info("="*60)
         logger.info(f"Starting Generation: {self.config.model_name}")
+        logger.info(f"  exclude_padding: {self.config.exclude_padding}")
         logger.info("="*60)
         
         start_time = time.time()
@@ -230,7 +319,13 @@ class SequenceGenerator:
         people_data = [self._load_person_data(idx) for idx in tqdm(selected_indices, desc="Loading people")]
         buddy_data = [self._load_person_data(idx) for idx in tqdm(buddy_indices, desc="Loading buddies")]
         
-        # Storage for results
+        # Save original sequences first
+        logger.info("Saving original sequences...")
+        original_path = self._save_original_sequences(
+            people_data, buddy_data, selected_indices, buddy_indices
+        )
+        
+        # Storage for generation results
         records = []
         
         # Process each prefix length
@@ -244,27 +339,11 @@ class SequenceGenerator:
                 
                 x4 = person['x4']
                 pm = person['pm']
+                buddy = buddy_data[person_idx]
                 
                 # Get prefix
                 prefix_4stream = x4[:, :prefix_len]
                 prefix_mask = pm[:prefix_len]
-                
-                # Get original continuation
-                original_tokens = x4[0, prefix_len:prefix_len+h].tolist()
-                
-                # Get buddy's continuation
-                buddy = buddy_data[person_idx]
-                if prefix_len + h <= buddy['L_real']:
-                    buddy_tokens = buddy['x4'][0, prefix_len:prefix_len+h].tolist()
-                else:
-                    buddy_tokens = buddy['x4'][0, prefix_len:buddy['L_real']].tolist()
-                
-                # Get next person's continuation (circular)
-                next_person = people_data[(person_idx + 1) % n]
-                if prefix_len + h <= next_person['L_real']:
-                    next_tokens = next_person['x4'][0, prefix_len:prefix_len+h].tolist()
-                else:
-                    next_tokens = next_person['x4'][0, prefix_len:next_person['L_real']].tolist()
                 
                 # Generate c times
                 for gen_idx in range(c):
@@ -273,47 +352,20 @@ class SequenceGenerator:
                     records.append({
                         'person_idx': person_idx,
                         'rinpersoon_id': person['rinpersoon_id'],
+                        'buddy_idx': person_idx,  # buddy's local index (same as person_idx for pairing)
+                        'buddy_rinpersoon_id': buddy['rinpersoon_id'],
                         'prefix_len': prefix_len,
                         'generation_idx': gen_idx,
-                        'original_tokens': original_tokens,
-                        'generated_tokens': generated_tokens,
-                        'buddy_tokens': buddy_tokens,
-                        'next_tokens': next_tokens,
-                        'original_len': len(original_tokens),
+                        'generated_tokens': ','.join(map(str, generated_tokens)),
                         'generated_len': len(generated_tokens),
-                        'buddy_len': len(buddy_tokens),
-                        'next_len': len(next_tokens),
                     })
         
         logger.info(f"Generated {len(records)} records")
         
-        # Convert to Parquet
-        # Note: Lists are stored as strings for Parquet compatibility
-        logger.info("Converting to Parquet...")
-        
-        parquet_records = []
-        for r in records:
-            parquet_records.append({
-                'person_idx': r['person_idx'],
-                'rinpersoon_id': r['rinpersoon_id'],
-                'prefix_len': r['prefix_len'],
-                'generation_idx': r['generation_idx'],
-                'original_tokens': ','.join(map(str, r['original_tokens'])),
-                'generated_tokens': ','.join(map(str, r['generated_tokens'])),
-                'buddy_tokens': ','.join(map(str, r['buddy_tokens'])),
-                'next_tokens': ','.join(map(str, r['next_tokens'])),
-                'original_len': r['original_len'],
-                'generated_len': r['generated_len'],
-                'buddy_len': r['buddy_len'],
-                'next_len': r['next_len'],
-            })
-        
-        # Create PyArrow table
-        import pandas as pd
-        df = pd.DataFrame(parquet_records)
+        # Save generated sequences to Parquet
+        logger.info("Saving generated sequences...")
+        df = pd.DataFrame(records)
         table = pa.Table.from_pandas(df)
-        
-        # Write Parquet
         pq.write_table(table, self.config.sequences_path)
         
         file_size = os.path.getsize(self.config.sequences_path) / (1024 * 1024)
@@ -321,7 +373,8 @@ class SequenceGenerator:
         
         logger.info("="*60)
         logger.info(f"Generation Complete!")
-        logger.info(f"  Output: {self.config.sequences_path}")
+        logger.info(f"  Original sequences: {original_path}")
+        logger.info(f"  Generated sequences: {self.config.sequences_path}")
         logger.info(f"  Size: {file_size:.1f} MB")
         logger.info(f"  Records: {len(records)}")
         logger.info(f"  Time: {elapsed/60:.1f} minutes")
@@ -334,8 +387,10 @@ class SequenceGenerator:
             'num_generations': c,
             'horizon': h,
             'prefix_lengths': self.config.prefix_lengths,
+            'exclude_padding': self.config.exclude_padding,
             'vocab_size': self.vocab_size,
             'pad_id': self.pad_id,
+            'max_seq_len': self.max_seq_len,
             'total_records': len(records),
             'selected_indices': selected_indices.tolist(),
             'buddy_indices': buddy_indices.tolist(),
@@ -366,6 +421,7 @@ def load_config(config_path: str) -> GenerationConfig:
         num_generations=cfg.get('num_generations', 100),
         horizon=cfg.get('horizon', 20),
         prefix_lengths=cfg.get('prefix_lengths'),
+        exclude_padding=cfg.get('exclude_padding', True),
         top_k=cfg.get('top_k', 20),
         temperature=cfg.get('temperature', 1.0),
         pad_token=cfg.get('pad_token', '[PAD]'),

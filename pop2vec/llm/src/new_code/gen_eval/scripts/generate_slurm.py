@@ -131,7 +131,8 @@ def load_experiment_config(exp_name: str, base_dir: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None) -> dict:
+def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None, 
+                             exclude_padding: bool = True) -> dict:
     """Create experiment configuration from parameters."""
     if name is None:
         name = f"exp_n{n}_c{c}_h{h}_g{g}"
@@ -150,6 +151,7 @@ def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None) -
         'horizon': h,
         'prefix_gap': g,
         'prefix_lengths': prefix_lengths,
+        'exclude_padding': exclude_padding,
         'top_k': 20,
         'temperature': 1.0,
         'seed': 42,
@@ -179,7 +181,8 @@ def generate_run_config(model_config: dict, exp_config: dict, output_dir: Path) 
         'data_path': model_config['data_path'],
         'vocab_path': model_config['vocab_path'],
         'output_dir': str(output_dir),
-        'sequences_path': str(output_dir / 'sequences.parquet'),
+        'sequences_path': str(output_dir / 'generated_sequences.parquet'),
+        'original_sequences_path': str(output_dir / 'original_sequences.parquet'),
         'statistics_path': str(output_dir / 'statistics_full.csv'),
         'statistics_summary_path': str(output_dir / 'statistics_summary.csv'),
     }
@@ -297,16 +300,33 @@ def generate_from_config(
         config = yaml.safe_load(f)
     
     # Get defaults from config or use standard defaults
+    # Note: config.get() returns None if key exists with null value,
+    # so we use `or` to fall back to defaults
     script_dir = Path(__file__).parent.parent
     
     if models_base_dir is None:
-        models_base_dir = Path(config.get('models_base_dir', script_dir / "config" / "models"))
+        cfg_val = config.get('models_base_dir')
+        models_base_dir = Path(cfg_val) if cfg_val else (script_dir / "config" / "models")
+    
     if output_base_dir is None:
-        output_base_dir = Path(config.get('output_base_dir', "/projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval"))
+        cfg_val = config.get('output_base_dir')
+        output_base_dir = Path(cfg_val) if cfg_val else Path("/projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval")
+    
     if slurm_output_dir is None:
-        slurm_output_dir = Path(config.get('slurm_output_dir', script_dir / "slurm_scripts"))
+        cfg_val = config.get('slurm_output_dir')
+        slurm_output_dir = Path(cfg_val) if cfg_val else (script_dir / "slurm_scripts")
+    
     if log_dir is None:
-        log_dir = config.get('log_dir', "/projects/0/prjs1589/stonybrook/logs")
+        cfg_val = config.get('log_dir')
+        log_dir = cfg_val if cfg_val else "/projects/0/prjs1589/stonybrook/logs"
+    
+    # Print resolved paths for verification
+    print(f"Resolved paths:")
+    print(f"  models_base_dir: {models_base_dir}")
+    print(f"  output_base_dir: {output_base_dir}")
+    print(f"  slurm_output_dir: {slurm_output_dir}")
+    print(f"  log_dir: {log_dir}")
+    print()
     
     models = config.get('models', [])
     experiments = config.get('experiments', [])
@@ -332,6 +352,7 @@ def generate_from_config(
             h=exp_def['h'],
             g=exp_def['g'],
             name=exp_def.get('name'),
+            exclude_padding=exp_def.get('exclude_padding', True),
         )
         
         # Allow experiment-specific overrides
@@ -342,6 +363,7 @@ def generate_from_config(
         
         print(f"\nExperiment: {exp_config['experiment_name']}")
         print(f"  n={exp_def['n']}, c={exp_def['c']}, h={exp_def['h']}, g={exp_def['g']}")
+        print(f"  exclude_padding={exp_config['exclude_padding']}")
         print("-" * 40)
         
         scripts = generate_slurm_scripts(
@@ -408,8 +430,7 @@ Config file format (YAML):
     parser.add_argument("--models-dir", help="Models configuration directory")
     parser.add_argument("--output-dir", help="Output base directory")
     parser.add_argument("--slurm-dir", help="SLURM scripts output directory")
-    parser.add_argument("--log-dir", default="/projects/0/prjs1589/stonybrook/logs",
-                       help="SLURM log directory")
+    parser.add_argument("--log-dir", help="SLURM log directory (default: from config or /projects/0/prjs1589/stonybrook/logs)")
     
     args = parser.parse_args()
     

@@ -2,10 +2,17 @@
 """
 Compute Statistics (CPU Phase)
 
-Reads generated sequences from Parquet and computes all statistics.
+Reads generated sequences and original sequences from Parquet files and computes all statistics.
 Outputs two CSV files:
     1. statistics_full.csv - Full data with per-person columns
     2. statistics_summary.csv - Aggregated data only (no per-person columns)
+
+Input files:
+    - original_sequences.parquet - Original sequences with columns:
+        local_idx, h5_idx, rinpersoon_id, original_sequence, real_length, is_buddy
+    - generated_sequences.parquet (sequences_path) - Generated sequences with columns:
+        person_idx, rinpersoon_id, buddy_idx, buddy_rinpersoon_id, prefix_len, 
+        generation_idx, generated_tokens, generated_len
 
 Output CSV structure:
     - Each prefix_len forms a block
@@ -65,10 +72,14 @@ class StatsConfig:
     """Configuration for statistics computation."""
     model_name: str
     sequences_path: str
+    original_sequences_path: str  # Path to original_sequences.parquet
     statistics_path: str  # Full CSV with per-person columns
     statistics_summary_path: str  # Summary CSV without per-person columns
     vocab_path: str
     output_dir: str
+    
+    # Horizon (tokens to compare)
+    horizon: int = 20
     
     # PAD token ID (loaded from metadata or vocab)
     pad_id: int = 0
@@ -247,9 +258,46 @@ class StatisticsComputer:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
             self.pad_id = metadata.get('pad_id', config.pad_id)
+            self.horizon = metadata.get('horizon', config.horizon)
             logger.info(f"PAD token ID from metadata: {self.pad_id}")
+            logger.info(f"Horizon from metadata: {self.horizon}")
         else:
             self.pad_id = config.pad_id
+            self.horizon = config.horizon
+        
+        # Load original sequences
+        logger.info(f"Loading original sequences: {config.original_sequences_path}")
+        self.original_df = pd.read_parquet(config.original_sequences_path)
+        logger.info(f"Loaded {len(self.original_df)} original sequences")
+        
+        # Build lookup: local_idx -> original_sequence (as list of ints)
+        self.original_sequences = {}
+        self.real_lengths = {}
+        for _, row in self.original_df.iterrows():
+            local_idx = row['local_idx']
+            self.original_sequences[local_idx] = parse_tokens(row['original_sequence'])
+            self.real_lengths[local_idx] = row['real_length']
+        
+        # Number of persons (first n are persons, next n are buddies)
+        n_persons = len(self.original_df[self.original_df['is_buddy'] == False])
+        n_buddies = len(self.original_df[self.original_df['is_buddy'] == True])
+        logger.info(f"Persons: {n_persons}, Buddies: {n_buddies}")
+        self.n_persons = n_persons
+    
+    def _get_continuation(self, local_idx: int, prefix_len: int, horizon: int) -> List[int]:
+        """Get continuation tokens from original sequence."""
+        if local_idx not in self.original_sequences:
+            return []
+        
+        seq = self.original_sequences[local_idx]
+        real_len = self.real_lengths.get(local_idx, len(seq))
+        
+        # Check if we have enough tokens
+        if prefix_len + horizon > real_len:
+            # Return what we have
+            return seq[prefix_len:real_len]
+        
+        return seq[prefix_len:prefix_len + horizon]
     
     def _compute_comparison_stats(
         self,
@@ -274,16 +322,22 @@ class StatisticsComputer:
             # Process each record
             for _, record in df.iterrows():
                 person_idx = record['person_idx']
+                buddy_idx = record.get('buddy_idx', person_idx)  # buddy's local index
                 
                 generated = parse_tokens(record['generated_tokens'])
                 
-                # Select comparison target
+                # Select comparison target from original sequences
                 if comparison_target == 'self':
-                    target = parse_tokens(record['original_tokens'])
+                    # Person's own continuation (person_idx is local_idx for persons)
+                    target = self._get_continuation(person_idx, prefix_len, self.horizon)
                 elif comparison_target == 'buddy':
-                    target = parse_tokens(record['buddy_tokens'])
+                    # Buddy's continuation (buddy is at local_idx = n_persons + buddy_idx)
+                    buddy_local_idx = self.n_persons + buddy_idx
+                    target = self._get_continuation(buddy_local_idx, prefix_len, self.horizon)
                 else:  # next
-                    target = parse_tokens(record['next_tokens'])
+                    # Next person's continuation (circular)
+                    next_idx = (person_idx + 1) % n_people
+                    target = self._get_continuation(next_idx, prefix_len, self.horizon)
                 
                 # Compute match
                 if is_ordered:
@@ -508,10 +562,13 @@ def load_config(config_path: str) -> StatsConfig:
     return StatsConfig(
         model_name=cfg['model_name'],
         sequences_path=cfg['sequences_path'],
+        original_sequences_path=cfg.get('original_sequences_path', 
+                                        os.path.join(output_dir, 'original_sequences.parquet')),
         statistics_path=cfg.get('statistics_path', os.path.join(output_dir, 'statistics_full.csv')),
         statistics_summary_path=cfg.get('statistics_summary_path', os.path.join(output_dir, 'statistics_summary.csv')),
         vocab_path=cfg['vocab_path'],
         output_dir=output_dir,
+        horizon=cfg.get('horizon', 20),
         pad_id=cfg.get('pad_id', 0),
         top_n_tokens=cfg.get('top_n_tokens', 0),
         pad_exclusion_mode=cfg.get('pad_exclusion_mode', 'both'),
