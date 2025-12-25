@@ -735,15 +735,28 @@ def process_file(
     os.makedirs(Path(output_path).parent, exist_ok=True)
     
     with h5py.File(output_path, 'w') as f_out:
-        # Pre-allocate datasets
-        f_out.create_dataset('input_ids', (n_samples, 4, max_seq_len), dtype=np.int64)
-        f_out.create_dataset('padding_mask', (n_samples, max_seq_len), dtype=np.int64)
+        # Pre-allocate datasets WITH COMPRESSION
+        # Use gzip compression level 4 for good balance of speed and size
+        chunk_size = min(1000, n_samples)
+        compression = 'gzip'
+        compression_opts = 4
         
-        # Copy other fields as-is
+        f_out.create_dataset('input_ids', (n_samples, 4, max_seq_len), dtype=np.int64,
+                            compression=compression, compression_opts=compression_opts,
+                            chunks=(chunk_size, 4, max_seq_len))
+        f_out.create_dataset('padding_mask', (n_samples, max_seq_len), dtype=np.int64,
+                            compression=compression, compression_opts=compression_opts,
+                            chunks=(chunk_size, max_seq_len))
+        
+        # Copy other fields as-is (with compression)
         if 'sequence_id' in fields:
-            f_out.create_dataset('sequence_id', (n_samples,), dtype=np.int64)
-        if 'original_sequence' in fields:
-            f_out.create_dataset('original_sequence', (n_samples, max_seq_len), dtype=np.int64)
+            f_out.create_dataset('sequence_id', (n_samples,), dtype=np.int64,
+                                compression=compression, compression_opts=compression_opts,
+                                chunks=(chunk_size,))
+        # Always create original_sequence (copy of input_ids[0])
+        f_out.create_dataset('original_sequence', (n_samples, max_seq_len), dtype=np.int64,
+                            compression=compression, compression_opts=compression_opts,
+                            chunks=(chunk_size, max_seq_len))
         if 'target_tokens' in fields and mlm_encoded:
             # These need special handling for variable length (only for MLM data)
             with h5py.File(input_path, 'r') as f_in:
@@ -808,25 +821,28 @@ def process_file(
             if birthday_count > 0:
                 num_sequences_modified += 1
             
+            # Properly compute original_sequence and padding_mask from input_ids
+            # original_sequence = input_ids[0] (token stream)
+            original_sequence = input_ids[0]
+            
+            # padding_mask: 1 for real tokens, 0 for PAD tokens (PAD ID = 0)
+            # This is the CORRECT definition based on load_data.py
+            padding_mask = (original_sequence != 0).astype(np.int64)
+            
             # Track sequence length changes
             seq_len = int(padding_mask.sum())
             total_sequence_length_after += seq_len
                 
             f_out['input_ids'][original_idx] = input_ids
             f_out['padding_mask'][original_idx] = padding_mask
+            f_out['original_sequence'][original_idx] = original_sequence
             
-            # Write unchanged fields
+            # Write sequence_id if present
             if 'sequence_id' in sample:
                 seq_id = sample['sequence_id']
                 if hasattr(seq_id, 'numpy'):
                     seq_id = seq_id.numpy()
                 f_out['sequence_id'][original_idx] = seq_id
-            if 'original_sequence' in sample:
-                # Update original_sequence to match new input_ids[0]
-                orig_seq = sample['input_ids'][0]
-                if hasattr(orig_seq, 'numpy'):
-                    orig_seq = orig_seq.numpy()
-                f_out['original_sequence'][original_idx] = orig_seq
     
     # Print comprehensive summary
     logger.info("=" * 80)

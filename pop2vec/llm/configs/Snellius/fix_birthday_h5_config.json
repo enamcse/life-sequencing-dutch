@@ -1,0 +1,8 @@
+{
+    "input_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded_with_birthdays_dry.h5",
+    "output_file": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded_with_birthdays_dry_fixed.h5",
+    "pad_id": 0,
+    "batch_size": 10000,
+    "compression": "gzip",
+    "compression_opts": 4
+}
