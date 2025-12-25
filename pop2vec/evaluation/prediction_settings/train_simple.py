@@ -61,6 +61,7 @@ DEFAULTS = {
     "balance_dataset": False,
     "num_layers": 2,  # fixed internally
     "test_only": False,
+    "save_predictions": False,  # if True, save predictions to CSV files
 }
 
 # Keys *always* required
@@ -628,14 +629,12 @@ def _eval_test(
         test_metrics = _classification_metrics(y, logits, thr=thr)
         probas = 1.0/(1.0 + np.exp(-logits))
         preds = (probas >= thr).astype(int)
-        # Save probability and label CSVs
-        prob_path = make_pred_path(cfg["result_path"], "probab")
-        label_path = make_pred_path(cfg["result_path"], "label")
-
-        # Write two-column CSVs: RINPERSOON, prediction
-        rin = test_df[PRIMARY_KEY].to_numpy()
-        pd.DataFrame({PRIMARY_KEY: rin, "probability": probas}).to_csv(prob_path, index=False)
-        pd.DataFrame({PRIMARY_KEY: rin, "label": preds}).to_csv(label_path, index=False)
+        # Save predictions CSV if enabled (3 columns: ID, probability, label)
+        if cfg.get("save_predictions", False):
+            pred_path = Path(cfg["result_dir"], f"{cfg['task_file']}_predictions.csv")
+            rin = test_df[PRIMARY_KEY].to_numpy()
+            pd.DataFrame({PRIMARY_KEY: rin, "probability": probas, "prediction": preds}).to_csv(pred_path, index=False)
+            logging.info(f"Saved predictions to {pred_path}")
     elif target_type == "numeric":
         test_metrics = _regression_metrics(y, logits)
     else: # categorical

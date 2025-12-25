@@ -73,7 +73,8 @@ DEFAULTS = {
     "epsilon": 1e-6,
     "optimizer_type": "adamw",
     "lr_scheduler": "onecycle",
-    "binary_threshold": 0.5,    
+    "binary_threshold": 0.5,
+    "save_predictions": False,  # if True, save predictions to CSV files
 }
 
 ALWAYS_REQUIRED = [
@@ -855,8 +856,13 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
         lbls  = (probs >= thr_from_ckpt).astype(int)
         if not (len(ids) == len(probs) == len(lbls)):
             raise ValueError(f"Length mismatch: ids={len(ids)} probs={len(probs)} lbls={len(lbls)}")
-        arr  = np.c_[ids, probs, lbls]
-        hdr  = "RINPERSOON,probability,prediction"
+        
+        if c.get("save_predictions", False):
+            # Save predictions CSV (3 columns: ID, probability, prediction)
+            pred_path = Path(c["result_dir"], f"{c['task_file']}_{tgt}_predictions.csv")
+            key = c.get("PRIMARY_KEY", "RINPERSOON")
+            pd.DataFrame({key: ids, "probability": probs, "prediction": lbls}).to_csv(pred_path, index=False)
+            _ddp_log(f"wrote {pred_path}")
     else:
         if ttype == "categorical":
             preds = np.asarray(preds).argmax(1) + 1  # 1-based labels
@@ -868,15 +874,12 @@ def _run_test(c: Dict, tgt: str, ttype: str, k_out: int):
 
         if len(ids) != len(preds):
             raise ValueError(f"Length mismatch: ids={len(ids)} preds={len(preds)}")
-        arr = np.c_[ids, preds]
-        hdr = "RINPERSOON,prediction"
-
-    if c.get("save_predictions", None):
-        out = Path(c["result_dir"], f"{c['task_file']}_{tgt}.csv")
-        np.savetxt(out, arr, delimiter=",", header=hdr, comments="", fmt="%s")
-        _ddp_log(f"wrote {out}")
-    else:
-        _ddp_log("save_predictions not set; skipping predictions file write")
+        
+        if c.get("save_predictions", False):
+            out = Path(c["result_dir"], f"{c['task_file']}_{tgt}.csv")
+            key = c.get("PRIMARY_KEY", "RINPERSOON")
+            pd.DataFrame({key: ids, "prediction": preds}).to_csv(out, index=False)
+            _ddp_log(f"wrote {out}")
 
     return test_metrics
 
