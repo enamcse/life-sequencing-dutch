@@ -1,0 +1,41 @@
+# Large Scale Experiment Configuration
+# (n, c, h, g) = (100, 1000, 20, 100)
+
+experiment_name: "exp_n100_c1000_h20_g100"
+
+# Number of people to evaluate
+num_people: 100
+
+# Number of generations per person per prefix
+num_generations: 1000
+
+# Horizon: number of tokens to generate
+horizon: 20
+
+# Prefix gap
+prefix_gap: 100
+
+# Explicit prefix lengths
+prefix_lengths: [1, 101, 201, 301, 401, 501, 601, 701, 801, 901, 1001]
+
+# Sampling parameters
+top_k: 20
+temperature: 1.0
+
+# Random seed
+seed: 42
+
+# SLURM settings for generation phase (GPU)
+generation:
+  partition: "gpu_h100"
+  gpus: 1
+  cpus: 4
+  mem: "128G"
+  time: "96:00:00"
+
+# SLURM settings for statistics phase (CPU)
+statistics:
+  partition: "thin"
+  cpus: 16
+  mem: "64G"
+  time: "24:00:00"

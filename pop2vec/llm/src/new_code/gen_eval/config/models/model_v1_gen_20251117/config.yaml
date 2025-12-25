@@ -1,0 +1,7 @@
+# Model configuration for model_v1_gen_20251117
+
+model_name: "model_v1_gen_20251117"
+checkpoint_path: "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_gen_20251117/model-epoch=00-step=69320-val_loss_track=0.23.ckpt"
+data_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5"
+vocab_path: "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv"
+output_dir: "/projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/model_v1_gen_20251117"

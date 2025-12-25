@@ -1,0 +1,88 @@
+# Experiments Configuration
+# Use this file to generate SLURM scripts for multiple experiments at once
+#
+# Usage:
+#   python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm --config this_file.yaml
+
+# Base directories (optional, defaults shown)
+models_base_dir: null  # Uses gen_eval/config/models by default
+output_base_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval
+slurm_output_dir: null  # Uses gen_eval/slurm_scripts by default
+log_dir: /projects/0/prjs1589/stonybrook/logs
+
+# Models to evaluate (must be setup first via setup_model.py)
+models:
+  - model_v1_gen_20251117
+  # - model_v2
+  # - model_v3_large
+
+# Experiment configurations
+# Parameters:
+#   n: Number of people (original sequences to sample)
+#   c: Number of generations per person per prefix
+#   h: Horizon (number of tokens to generate each time)
+#   g: Gap between prefix lengths (1, 1+g, 1+2g, ...)
+#
+# Optional overrides per experiment:
+#   name: Custom experiment name (default: exp_n{n}_c{c}_h{h}_g{g})
+#   generation: SLURM settings for generation job
+#   statistics: SLURM settings for statistics job
+#   pad_exclusion_mode: 'seq1', 'seq2', or 'both' (default: 'both')
+
+experiments:
+  # Quick test experiment
+  - n: 10
+    c: 100
+    h: 20
+    g: 100
+    # Optional SLURM overrides
+    generation:
+      time: "24:00:00"
+    statistics:
+      time: "4:00:00"
+
+  # Medium scale experiment
+  - n: 100
+    c: 1000
+    h: 20
+    g: 100
+    generation:
+      time: "48:00:00"
+      mem: "64G"
+    statistics:
+      time: "12:00:00"
+      mem: "64G"
+
+  # Large scale experiment (uncomment when ready)
+  # - n: 1000
+  #   c: 1000
+  #   h: 20
+  #   g: 100
+  #   generation:
+  #     time: "96:00:00"
+  #     mem: "128G"
+  #   statistics:
+  #     time: "24:00:00"
+  #     mem: "128G"
+
+  # Different horizon experiments
+  # - n: 100
+  #   c: 1000
+  #   h: 50
+  #   g: 100
+
+  # - n: 100
+  #   c: 1000
+  #   h: 100
+  #   g: 100
+
+  # Different gap experiments
+  # - n: 100
+  #   c: 1000
+  #   h: 20
+  #   g: 50
+
+  # - n: 100
+  #   c: 1000
+  #   h: 20
+  #   g: 200

@@ -1,0 +1,41 @@
+# Example Experiment Configuration
+# (n, c, h, g) = (10, 100, 20, 100)
+
+experiment_name: "exp_n10_c100_h20_g100"
+
+# Number of people to evaluate
+num_people: 10
+
+# Number of generations per person per prefix
+num_generations: 100
+
+# Horizon: number of tokens to generate
+horizon: 20
+
+# Prefix gap (generates: 1, 101, 201, 301, ...)
+prefix_gap: 100
+
+# Explicit prefix lengths (overrides prefix_gap if set)
+prefix_lengths: [1, 101, 201, 301, 401, 501, 601, 701, 801, 901, 1001]
+
+# Sampling parameters
+top_k: 20
+temperature: 1.0
+
+# Random seed
+seed: 42
+
+# SLURM settings for generation phase (GPU)
+generation:
+  partition: "gpu_h100"
+  gpus: 1
+  cpus: 4
+  mem: "64G"
+  time: "48:00:00"
+
+# SLURM settings for statistics phase (CPU)
+statistics:
+  partition: "thin"
+  cpus: 8
+  mem: "32G"
+  time: "12:00:00"
