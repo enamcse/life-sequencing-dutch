@@ -34,13 +34,16 @@ logger = logging.getLogger(__name__)
 class BirthdayTokenInserter:
     """Handles birthday token insertion logic"""
     
-    def __init__(self, vocab_path: str, max_seq_len: int = 512):
+    def __init__(self, vocab_path: str, max_seq_len: int = 512, insert_all_birthdays: bool = True):
         """
         Args:
             vocab_path: Path to vocabulary CSV file
             max_seq_len: Maximum sequence length after insertion
+            insert_all_birthdays: If True, insert birthday tokens for ALL ages from 1 to max_age.
+                                  If False, only insert for years with no existing events (gap-filling).
         """
         self.max_seq_len = max_seq_len
+        self.insert_all_birthdays = insert_all_birthdays
         self.vocab_df = pd.read_csv(vocab_path)
         
         # Create mapping for quick lookups
@@ -244,7 +247,12 @@ class BirthdayTokenInserter:
         return genesis_days + days_since_birth
     
     def _insert_birthday_tokens_by_age_gaps(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Insert birthday tokens based on age gaps in the sequence"""
+        """
+        Insert birthday tokens into the sequence.
+        
+        If insert_all_birthdays=True: Insert birthday token for EVERY age from 1 to max_age
+        If insert_all_birthdays=False: Only insert for ages with no existing events (gap-filling)
+        """
         tokens = input_ids[0]  # (L,)
         abspos = input_ids[1]  # (L,)
         ages = input_ids[2]    # (L,)
@@ -263,11 +271,27 @@ class BirthdayTokenInserter:
         
         # Check for death tokens - stop processing if found
         death_token_id = self.token_to_id.get('DEATH', None)
-        death_positions = []
-        if death_token_id is not None:
-            death_positions = (tokens == death_token_id).nonzero(as_tuple=False)
         
-        # Process sequence after background
+        # Collect all events after background with their ages
+        events_after_bg = []
+        max_age_in_sequence = 0
+        
+        for i in range(bg_end + 1, len(tokens)):
+            if tokens[i] == self.pad_id:
+                break
+            
+            current_age = int(ages[i])
+            max_age_in_sequence = max(max_age_in_sequence, current_age)
+            
+            events_after_bg.append({
+                'token': int(tokens[i]),
+                'abspos': int(abspos[i]),
+                'age': current_age,
+                'segment': int(segments[i]),
+                'is_death': death_token_id is not None and int(tokens[i]) == death_token_id
+            })
+        
+        # Build new sequence
         new_events = []
         
         # Add background (unchanged)
@@ -279,75 +303,116 @@ class BirthdayTokenInserter:
                 'segment': int(segments[i])
             })
         
-        # Track last age seen (skip age 0)
-        last_age = 0
-        
-        # Process tokens after background
-        for i in range(bg_end + 1, len(tokens)):
-            if tokens[i] == self.pad_id:
-                break  # Stop at padding
+        if self.insert_all_birthdays:
+            # MODE 1: Insert birthday for ALL ages from 1 to max_age
+            # Group events by age
+            events_by_age = {}
+            for event in events_after_bg:
+                age = event['age']
+                if age not in events_by_age:
+                    events_by_age[age] = []
+                events_by_age[age].append(event)
+            
+            # Process ages in order, inserting birthday before each age's events
+            for age in range(1, max_age_in_sequence + 1):
+                # Always insert birthday token for this age
+                if age not in self.birthday_token_ids:
+                    self._add_birthday_token(age)
                 
-            # Stop if we hit a death token
-            if death_token_id is not None and tokens[i] == death_token_id:
-                # Add the death token and stop
-                new_events.append({
-                    'token': int(tokens[i]),
-                    'abspos': int(abspos[i]),
-                    'age': int(ages[i]),
-                    'segment': int(segments[i])
-                })
-                break
+                birthday_date = self._calculate_birthday_date(genesis_date_days, age)
                 
-            current_age = int(ages[i])
-            
-            # Skip age 0 tokens
-            if current_age == 0:
+                # Add birthday token
                 new_events.append({
-                    'token': int(tokens[i]),
-                    'abspos': int(abspos[i]),
-                    'age': int(ages[i]),
-                    'segment': int(segments[i])
+                    'token': self.birthday_token_ids[age],
+                    'abspos': birthday_date,
+                    'age': age,
+                    'segment': 1
                 })
-                continue
+                
+                # Add [SEP] after birthday
+                new_events.append({
+                    'token': self.sep_id,
+                    'abspos': birthday_date,
+                    'age': age,
+                    'segment': 1
+                })
+                
+                # Add all events for this age (if any)
+                if age in events_by_age:
+                    for event in events_by_age[age]:
+                        new_events.append({
+                            'token': event['token'],
+                            'abspos': event['abspos'],
+                            'age': event['age'],
+                            'segment': event['segment']
+                        })
+                        # Stop if death token
+                        if event['is_death']:
+                            break
             
-            # If we have an age gap, insert birthday tokens
-            if current_age > last_age + 1:
-                # Insert birthday tokens for missing ages
-                for missing_age in range(last_age + 1, current_age):
-                    # Create birthday token if it doesn't exist
-                    if missing_age not in self.birthday_token_ids:
-                        self._add_birthday_token(missing_age)
-                    
-                    # Calculate correct birthday date
-                    birthday_date = self._calculate_birthday_date(genesis_date_days, missing_age)
-                    
-                    # Add birthday token
+            # Add any age-0 events at the end (shouldn't normally happen)
+            if 0 in events_by_age:
+                for event in events_by_age[0]:
                     new_events.append({
-                        'token': self.birthday_token_ids[missing_age],
-                        'abspos': birthday_date,  # Use calculated date
-                        'age': missing_age,
-                        'segment': 1  # Temporal segment
+                        'token': event['token'],
+                        'abspos': event['abspos'],
+                        'age': event['age'],
+                        'segment': event['segment']
                     })
-                    
-                    # Add [SEP] after birthday
+        else:
+            # MODE 2: Only insert birthday for ages with NO events (gap-filling)
+            last_age = 0
+            
+            for event in events_after_bg:
+                current_age = event['age']
+                
+                # Skip age 0 tokens - just add them
+                if current_age == 0:
                     new_events.append({
-                        'token': self.sep_id,
-                        'abspos': birthday_date,  # Same date as birthday
-                        'age': missing_age,
-                        'segment': 1
+                        'token': event['token'],
+                        'abspos': event['abspos'],
+                        'age': event['age'],
+                        'segment': event['segment']
                     })
-            
-            # Add the current event
-            new_events.append({
-                'token': int(tokens[i]),
-                'abspos': int(abspos[i]),
-                'age': int(ages[i]),
-                'segment': int(segments[i])
-            })
-            
-            # Update last age seen
-            if current_age > 0:
-                last_age = current_age
+                    continue
+                
+                # If we have an age gap, insert birthday tokens for missing ages
+                if current_age > last_age + 1:
+                    for missing_age in range(last_age + 1, current_age):
+                        if missing_age not in self.birthday_token_ids:
+                            self._add_birthday_token(missing_age)
+                        
+                        birthday_date = self._calculate_birthday_date(genesis_date_days, missing_age)
+                        
+                        new_events.append({
+                            'token': self.birthday_token_ids[missing_age],
+                            'abspos': birthday_date,
+                            'age': missing_age,
+                            'segment': 1
+                        })
+                        
+                        new_events.append({
+                            'token': self.sep_id,
+                            'abspos': birthday_date,
+                            'age': missing_age,
+                            'segment': 1
+                        })
+                
+                # Add the current event
+                new_events.append({
+                    'token': event['token'],
+                    'abspos': event['abspos'],
+                    'age': event['age'],
+                    'segment': event['segment']
+                })
+                
+                # Update last age seen
+                if current_age > 0:
+                    last_age = current_age
+                
+                # Stop if death token
+                if event['is_death']:
+                    break
         
         # Convert back to tensor format
         new_len = len(new_events)
@@ -362,7 +427,7 @@ class BirthdayTokenInserter:
         return new_input_ids
 
 
-def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_len, mlm_encoded=False):
+def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_len, mlm_encoded=False, insert_all_birthdays=True):
     """
     Process a batch of samples in parallel worker.
     This function will be called by each worker process.
@@ -391,6 +456,7 @@ def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_l
             self.token_to_id = token_to_id
             self.id_to_token = id_to_token
             self.max_seq_len = max_seq_len
+            self.insert_all_birthdays = insert_all_birthdays
         
         def _extract_birth_info(self, background_tokens):
             """Extract birth year and month from background tokens"""
@@ -428,6 +494,12 @@ def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_l
             return genesis_days + days_since_birth
         
         def _insert_birthday_tokens_by_age_gaps(self, input_ids):
+            """
+            Insert birthday tokens into the sequence.
+            
+            If insert_all_birthdays=True: Insert birthday token for EVERY age from 1 to max_age
+            If insert_all_birthdays=False: Only insert for ages with no existing events (gap-filling)
+            """
             tokens = input_ids[0]
             abspos = input_ids[1]
             ages = input_ids[2]
@@ -446,6 +518,26 @@ def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_l
             # Check for death tokens
             death_token_id = self.token_to_id.get('DEATH', None)
             
+            # Collect all events after background with their ages
+            events_after_bg = []
+            max_age_in_sequence = 0
+            
+            for i in range(bg_end + 1, len(tokens)):
+                if tokens[i] == self.pad_id:
+                    break
+                
+                current_age = int(ages[i])
+                max_age_in_sequence = max(max_age_in_sequence, current_age)
+                
+                events_after_bg.append({
+                    'token': int(tokens[i]),
+                    'abspos': int(abspos[i]),
+                    'age': current_age,
+                    'segment': int(segments[i]),
+                    'is_death': death_token_id is not None and int(tokens[i]) == death_token_id
+                })
+            
+            # Build new sequence
             new_events = []
             
             # Add background (unchanged)
@@ -457,72 +549,112 @@ def process_batch_parallel(batch_indices, input_path, inserter_config, max_seq_l
                     'segment': int(segments[i])
                 })
             
-            # Track last age seen (skip age 0)
-            last_age = 0
-            
-            # Process tokens after background
-            for i in range(bg_end + 1, len(tokens)):
-                if tokens[i] == self.pad_id:
-                    break  # Stop at padding
+            if self.insert_all_birthdays:
+                # MODE 1: Insert birthday for ALL ages from 1 to max_age
+                # Group events by age
+                events_by_age = {}
+                for event in events_after_bg:
+                    age = event['age']
+                    if age not in events_by_age:
+                        events_by_age[age] = []
+                    events_by_age[age].append(event)
+                
+                # Process ages in order, inserting birthday before each age's events
+                for age in range(1, max_age_in_sequence + 1):
+                    # Only add if birthday token exists (pre-populated)
+                    if age in self.birthday_token_ids:
+                        birthday_date = self._calculate_birthday_date(genesis_date_days, age)
+                        
+                        # Add birthday token
+                        new_events.append({
+                            'token': self.birthday_token_ids[age],
+                            'abspos': birthday_date,
+                            'age': age,
+                            'segment': 1
+                        })
+                        
+                        # Add [SEP] after birthday
+                        new_events.append({
+                            'token': self.sep_id,
+                            'abspos': birthday_date,
+                            'age': age,
+                            'segment': 1
+                        })
                     
-                # Stop if we hit a death token
-                if death_token_id is not None and tokens[i] == death_token_id:
-                    new_events.append({
-                        'token': int(tokens[i]),
-                        'abspos': int(abspos[i]),
-                        'age': int(ages[i]),
-                        'segment': int(segments[i])
-                    })
-                    break
+                    # Add all events for this age (if any)
+                    if age in events_by_age:
+                        for event in events_by_age[age]:
+                            new_events.append({
+                                'token': event['token'],
+                                'abspos': event['abspos'],
+                                'age': event['age'],
+                                'segment': event['segment']
+                            })
+                            # Stop if death token
+                            if event['is_death']:
+                                break
+                
+                # Add any age-0 events at the end
+                if 0 in events_by_age:
+                    for event in events_by_age[0]:
+                        new_events.append({
+                            'token': event['token'],
+                            'abspos': event['abspos'],
+                            'age': event['age'],
+                            'segment': event['segment']
+                        })
+            else:
+                # MODE 2: Only insert birthday for ages with NO events (gap-filling)
+                last_age = 0
+                
+                for event in events_after_bg:
+                    current_age = event['age']
                     
-                current_age = int(ages[i])
-                
-                # Skip age 0 tokens
-                if current_age == 0:
+                    # Skip age 0 tokens - just add them
+                    if current_age == 0:
+                        new_events.append({
+                            'token': event['token'],
+                            'abspos': event['abspos'],
+                            'age': event['age'],
+                            'segment': event['segment']
+                        })
+                        continue
+                    
+                    # If we have an age gap, insert birthday tokens for missing ages
+                    if current_age > last_age + 1:
+                        for missing_age in range(last_age + 1, current_age):
+                            if missing_age in self.birthday_token_ids:
+                                birthday_date = self._calculate_birthday_date(genesis_date_days, missing_age)
+                                
+                                new_events.append({
+                                    'token': self.birthday_token_ids[missing_age],
+                                    'abspos': birthday_date,
+                                    'age': missing_age,
+                                    'segment': 1
+                                })
+                                
+                                new_events.append({
+                                    'token': self.sep_id,
+                                    'abspos': birthday_date,
+                                    'age': missing_age,
+                                    'segment': 1
+                                })
+                    
+                    # Add the current event
                     new_events.append({
-                        'token': int(tokens[i]),
-                        'abspos': int(abspos[i]),
-                        'age': int(ages[i]),
-                        'segment': int(segments[i])
+                        'token': event['token'],
+                        'abspos': event['abspos'],
+                        'age': event['age'],
+                        'segment': event['segment']
                     })
-                    continue
-                
-                # If we have an age gap, insert birthday tokens
-                if current_age > last_age + 1:
-                    # Insert birthday tokens for missing ages
-                    num_inserted = 0
-                    for missing_age in range(last_age + 1, current_age):
-                        # Only add if birthday token exists (pre-populated)
-                        if missing_age in self.birthday_token_ids:
-                            # Calculate correct birthday date
-                            birthday_date = self._calculate_birthday_date(genesis_date_days, missing_age)
-                            
-                            new_events.append({
-                                'token': self.birthday_token_ids[missing_age],
-                                'abspos': birthday_date,
-                                'age': missing_age,
-                                'segment': 1
-                            })
-                            
-                            new_events.append({
-                                'token': self.sep_id,
-                                'abspos': birthday_date,
-                                'age': missing_age,
-                                'segment': 1
-                            })
-                            num_inserted += 1
-                
-                # Add the current event
-                new_events.append({
-                    'token': int(tokens[i]),
-                    'abspos': int(abspos[i]),
-                    'age': int(ages[i]),
-                    'segment': int(segments[i])
-                })
-                
-                # Update last age seen
-                if current_age > 0:
-                    last_age = current_age
+                    
+                    # Update last age seen
+                    if current_age > 0:
+                        last_age = current_age
+                    
+                    # Stop if death token
+                    if event['is_death']:
+                        break
             
             # Convert back to tensor format
             new_len = len(new_events)
@@ -632,6 +764,7 @@ def process_file(
     batch_size: int = 1000,
     num_workers: int = None,
     mlm_encoded: bool = False,
+    insert_all_birthdays: bool = True,
     device: torch.device = torch.device("cpu")
 ):
     """
@@ -645,6 +778,7 @@ def process_file(
         batch_size: Number of samples per batch
         num_workers: Number of parallel workers (default: CPU count)
         mlm_encoded: Whether the HDF5 contains MLM data (default: False for generative models)
+        insert_all_birthdays: If True, insert birthday for ALL ages. If False, only fill gaps.
         device: PyTorch device for tensor operations (default: CPU)
     """
     if num_workers is None:
@@ -672,11 +806,16 @@ def process_file(
     logger.info(f"Vocab:  {vocab_path}")
     logger.info("")
     logger.info("CONFIGURATION:")
-    logger.info(f"  max_seq_len:  {max_seq_len}")
-    logger.info(f"  batch_size:   {batch_size}")
-    logger.info(f"  num_workers:  {num_workers}")
-    logger.info(f"  mlm_encoded:  {mlm_encoded}")
-    logger.info(f"  device:       {device}")
+    logger.info(f"  max_seq_len:          {max_seq_len}")
+    logger.info(f"  batch_size:           {batch_size}")
+    logger.info(f"  num_workers:          {num_workers}")
+    logger.info(f"  mlm_encoded:          {mlm_encoded}")
+    logger.info(f"  insert_all_birthdays: {insert_all_birthdays}")
+    logger.info(f"  device:               {device}")
+    if insert_all_birthdays:
+        logger.info("  MODE: Insert birthday tokens for ALL ages (1 to max_age)")
+    else:
+        logger.info("  MODE: Insert birthday tokens only for EMPTY years (gap-filling)")
     logger.info("=" * 80)
     
     # Step 1: Scan all data to find unique ages (pre-processing step)
@@ -708,7 +847,7 @@ def process_file(
     # Step 2: Pre-populate vocabulary with ALL birthday tokens from age 1 to max_age
     # We need tokens for ALL ages, not just those present in the data,
     # because we'll insert birthdays for missing age gaps
-    inserter = BirthdayTokenInserter(vocab_path, max_seq_len)
+    inserter = BirthdayTokenInserter(vocab_path, max_seq_len, insert_all_birthdays=insert_all_birthdays)
     for age in range(1, min(max_age + 1, 101)):  # Ages 1-100 (or up to max_age)
         inserter._add_birthday_token(age)
     
@@ -778,7 +917,8 @@ def process_file(
             input_path=input_path,
             inserter_config=inserter_config,
             max_seq_len=max_seq_len,
-            mlm_encoded=mlm_encoded
+            mlm_encoded=mlm_encoded,
+            insert_all_birthdays=insert_all_birthdays
         )
         
         with Pool(processes=num_workers) as pool:
@@ -899,6 +1039,11 @@ def main():
     num_workers = config.get("num_workers", None)
     mlm_encoded = config.get("mlm_encoded", False)  # Default False for generative models
     
+    # Birthday insertion mode:
+    # True = insert birthday for ALL ages (recommended)
+    # False = only insert for years with no events (gap-filling only)
+    insert_all_birthdays = config.get("insert_all_birthdays", True)
+    
     # GPU configuration
     use_gpu = config.get("use_gpu", False)
     device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
@@ -913,7 +1058,8 @@ def main():
         batch_size=batch_size,
         num_workers=num_workers,
         mlm_encoded=mlm_encoded,
-        device=device  # Pass device to processing function
+        insert_all_birthdays=insert_all_birthdays,
+        device=device
     )
     
     # Print to stdout (goes to .out file) - keep minimal
