@@ -13,6 +13,7 @@ from pop2vec.llm.src.new_code.load_data import CustomLazyHDF5Dataset
 from pop2vec.llm.src.new_code.pipeline import write_to_hdf5
 from pop2vec.llm.src.new_code.utils import read_json
 from pop2vec.llm.src.transformer.models import TransformerEncoder
+from pop2vec.llm.src.transformer.performer import get_attention_weighted_embedding
 from pop2vec.utils.convert_hdf5_to_parquet import h5_array_to_pq
 
 DTYPE = np.float64
@@ -27,6 +28,7 @@ DEFAULT_VALS = {
     "save_token_embs": False,
     "batch_size": 512,
     "needed_ids_path": None,
+    "use_attention_weighted_emb": False,  # NEW: use attention-weighted embeddings
 }
 
 # ──────────────────── helper: hparam integrity / update ───────────────
@@ -100,6 +102,13 @@ def inference(cfg, transform_to_parquet=True):
     tokenized_path = cfg["tokenized_path"]
     model = load_model(cfg['checkpoint_path'])
     save_token_embs = cfg['save_token_embs']
+    use_attention_weighted = cfg.get('use_attention_weighted_emb', False)
+    
+    if use_attention_weighted:
+        logging.info("Using ATTENTION-WEIGHTED embeddings (from last layer attention)")
+    else:
+        logging.info("Using MEAN pooling for embeddings")
+    
     logging.info("Reading from tokenized path: %s", tokenized_path)
 
     if cfg['needed_ids_path']:
@@ -129,25 +138,43 @@ def inference(cfg, transform_to_parquet=True):
         if torch.cuda.is_available():
             batch["input_ids"] = batch["input_ids"].to("cuda")
             batch["padding_mask"] = batch["padding_mask"].to("cuda")
+        
+        padding_mask = batch["padding_mask"].bool()  # Convert to boolean mask
+        
         # Pass the batch through the model
         with torch.no_grad():
-            outputs = model(
-                x=batch["input_ids"].long(),
-                padding_mask=batch["padding_mask"].long(),
-            )
+            if use_attention_weighted:
+                # Get outputs AND attention info from last layer
+                outputs, attn_info = model(
+                    x=batch["input_ids"].long(),
+                    padding_mask=batch["padding_mask"].long(),
+                    return_attention=True
+                )
+                # Compute attention-weighted embedding
+                importance_scores = attn_info['importance_scores']
+                mean_emb = get_attention_weighted_embedding(
+                    output_embeddings=outputs,
+                    importance_scores=importance_scores,
+                    mask=padding_mask
+                )
+                mean_emb = mean_emb.cpu()
+            else:
+                # Original mean pooling
+                outputs = model(
+                    x=batch["input_ids"].long(),
+                    padding_mask=batch["padding_mask"].long(),
+                )
+                valid_token_counts = padding_mask.sum(dim=1, keepdim=True)  # Count non-padding tokens
+                valid_token_counts = valid_token_counts.clamp(min=1)  # Avoid division by zero
+                mean_emb = (outputs * padding_mask.unsqueeze(-1)).sum(dim=1) / valid_token_counts
+                mean_emb = mean_emb.cpu()
+        
         if i % 100 == 0:
             logging.info(f"printing for batch {i}:")
             logging.info(f"len(outputs) = {len(outputs)}")
             logging.info(f"batch length = {len(batch['sequence_id'])}")
 
         sequence_id = batch["sequence_id"]
-        # cls_emb = outputs[:, 0, :].cpu()
-        
-        padding_mask = batch["padding_mask"].bool()  # Convert to boolean mask
-        valid_token_counts = padding_mask.sum(dim=1, keepdim=True)  # Count non-padding tokens
-        valid_token_counts = valid_token_counts.clamp(min=1)  # Avoid division by zero
-        mean_emb = (outputs * padding_mask.unsqueeze(-1)).sum(dim=1) / valid_token_counts
-        mean_emb = mean_emb.cpu()
 
         data_dict = {"sequence_id": sequence_id, "mean_emb": mean_emb}
         if save_token_embs:

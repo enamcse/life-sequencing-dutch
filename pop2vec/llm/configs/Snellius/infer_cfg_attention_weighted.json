@@ -1,0 +1,8 @@
+{
+  "emb_write_path": "/projects/0/prjs1589/stonybrook/llm/embeddings/infer_20251111/small_attention_weighted.h5",
+  "tokenized_path": "/projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/dryrun_encoded.h5",
+  "checkpoint_path": "/projects/0/prjs1589/stonybrook/fake_models_v0/pretrained_20251111/model-epoch=00-step=137-val_loss_track=6.00.ckpt",
+  "batch_size": 512,
+  "needed_ids_path": "/projects/0/prjs1589/stonybrook/llm/data/subset_ids.parquet",
+  "use_attention_weighted_emb": true
+}

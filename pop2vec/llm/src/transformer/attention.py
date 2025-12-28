@@ -61,15 +61,16 @@ class MultiHeadAttention(nn.Module):
 
         self.step = 0
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, return_attention: bool = False):
         if self.attention_type == "performer":
             """
             FAVOR+ with the Local Head
             """
             mask = mask.bool()
-            out = self.attention(
-                x, mask=mask, context_mask=mask.bool(), pos=None
+            result = self.attention(
+                x, mask=mask, context_mask=mask.bool(), pos=None,
+                return_attention=return_attention
             )
-            return out
+            return result
         else:
             raise NotImplementedError("Unknown Attention Type")
