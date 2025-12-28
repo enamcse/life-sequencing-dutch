@@ -64,14 +64,39 @@ class Transformer(nn.Module):
         self.encoders = nn.ModuleList(
             [EncoderLayer(hparams) for _ in range(hparams.n_encoders)]
         )
-    def forward(self, x, padding_mask):
-        """Forward pass"""
+    def forward(self, x, padding_mask, return_attention: bool = False):
+        """Forward pass
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor
+        padding_mask : torch.Tensor
+            Padding mask
+        return_attention : bool
+            If True, returns (output, attention_info) where attention_info contains
+            'attention_matrix' and 'importance_scores' from the last encoder layer.
+            
+        Returns
+        -------
+        torch.Tensor or tuple
+            Output embeddings, or (output, attention_info) if return_attention=True
+        """
         x, _ = self.embedding(
             tokens=x[:, 0], position=x[:, 1], age=x[:, 2], segment=x[:, 3]
-        )
-        for layer in self.encoders:
+        ) # (batch_size, seq_len, hidden_size)
+        
+        n_layers = len(self.encoders)
+        for i, layer in enumerate(self.encoders):
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
-            x = layer(x, padding_mask)
+            # Only request attention from the last layer
+            if return_attention and i == n_layers - 1:
+                x, attn_info = layer(x, padding_mask, return_attention=True)
+            else:
+                x = layer(x, padding_mask) # (batch_size, seq_len, hidden_size)
+        
+        if return_attention:
+            return x, attn_info
         return x
 
     def forward_finetuning(self,x, padding_mask=None):

@@ -417,12 +417,30 @@ class EncoderLayer(nn.Module):
         except:
             log.warning("Cannot redraw random projections. Wrong attention type")
 
-    def forward(self, x, mask=None):
-        """Forward Pass"""
-        x = self.attention_sublayer(x, sublayer=self.attention, mask=mask)
-        x = self.position_sublayer(x, sublayer=self.position_wise)
-
-        return x
+    def forward(self, x, mask=None, return_attention: bool = False):
+        """Forward Pass
+        
+        If return_attention=True, returns (output, attention_info) where attention_info
+        contains 'attention_matrix' and 'importance_scores' from the last layer.
+        """
+        if return_attention:
+            # Direct call to attention to get attention info
+            attn_result = self.attention(x, mask=mask, return_attention=True)
+            attn_out, attn_info = attn_result
+            # Apply sublayer connection manually for attention
+            if self.attention_sublayer.norm_type == "rezero":
+                x = self.attention_sublayer.norm(x, attn_out)
+            elif self.attention_sublayer.norm_type == "pre_norm":
+                # Note: norm was already applied in the sublayer, so we do it properly
+                x_normed = self.attention_sublayer.norm(x)
+                attn_out_from_normed = self.attention(x_normed, mask=mask, return_attention=False)
+                x = self.attention_sublayer.gate(x, attn_out_from_normed)
+            x = self.position_sublayer(x, sublayer=self.position_wise)
+            return x, attn_info
+        else:
+            x = self.attention_sublayer(x, sublayer=self.attention, mask=mask)
+            x = self.position_sublayer(x, sublayer=self.position_wise)
+            return x
 
 ###############
 ## Loss Fn
