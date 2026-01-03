@@ -100,17 +100,60 @@ Single file with columns:
 - `buddy_tokens`: Random buddy's continuation
 - `next_tokens`: Next person's continuation
 
+### Ages Parquet (Phase 1)
+
+Single file (`ages.parquet`) with columns:
+- `local_idx`: Local index (0 to n-1 for persons, n to 2n-1 for buddies)
+- `h5_idx`: Original index in HDF5 file
+- `rinpersoon_id`: Person identifier
+- `age_stream`: Comma-separated ages for each position in the sequence
+- `real_length`: Real length of the sequence (before padding)
+- `is_buddy`: Whether this is a buddy sequence
+
+The age at any prefix position `p` can be looked up as `age_stream[p-1]`, allowing
+position-dependent decade bucket assignment for by-age statistics.
+
 ### Statistics CSV (Phase 2)
 
-**Two output files:**
+**Output files (filenames include n and c for traceability):**
 
-1. **`statistics_full.csv`** - Full data with per-person columns
+1. **`statistics_n{n}_c{c}_full.csv`** - Full data with per-person columns
    - Columns: `prefix_len, row_type, token_id, token, p0_num, p0_den, p1_num, p1_den, ..., total_num, total_den`
    - 12 comparison rows + V token frequency rows per prefix block
 
-2. **`statistics_summary.csv`** - Aggregated data only (for easy analysis)
+2. **`statistics_n{n}_c{c}_summary.csv`** - Aggregated data only (for easy analysis)
    - Columns: `prefix_len, row_type, token_id, token, total_num, total_den, rate`
    - Same rows as full CSV, but without per-person columns
+
+### By-Age Statistics (Optional)
+
+When `compute_by_age: true` is set, additional statistics files are generated with data grouped by age decade.
+
+**Key concept: Position-dependent age buckets**
+
+The age decade for each generation is determined by the age at position `prefix_len - 1` (the last token before generation starts). This means:
+- The **same person** can contribute to **different decade buckets** at different prefix_lens
+- If a person is age 5 at prefix_len 101 and age 15 at prefix_len 501, they contribute to "0-9" bucket for the first block and "10-19" for the second
+
+**Example:**
+```
+Original sequence:    [CLS] tok1 tok2 tok3 tok4 tok5 ...
+Age stream:           0     0    2    3    5    7    ...
+Prefix_len=3 → age at position 2 → age=2 → decade "0-9"
+Prefix_len=5 → age at position 4 → age=5 → decade "0-9"
+Prefix_len=6 → age at position 5 → age=7 → decade "0-9"
+```
+
+**Output files:**
+
+1. **`statistics_by_age_n{n}_c{c}_full.csv`** - Statistics grouped by decade
+   - Columns: `prefix_len, row_type, token_id, token, 0_9_num, 0_9_den, 10_19_num, 10_19_den, ..., 100plus_num, 100plus_den, total_num, total_den`
+   - Instead of per-person columns, has per-decade columns
+
+2. **`statistics_by_age_n{n}_c{c}_summary.csv`** - Summary of by-age statistics
+   - Columns: `prefix_len, row_type, token_id, token, total_num, total_den, rate`
+
+This allows analysis of how the model performs across different age groups (0-9, 10-19, 20-29, ..., 90-99, 100+ years old).
 
 ### Comparison Types (12 rows)
 

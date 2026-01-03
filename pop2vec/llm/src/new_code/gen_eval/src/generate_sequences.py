@@ -185,6 +185,10 @@ class SequenceGenerator:
         # Create padding mask from real length (1=real, 0=pad)
         pm = torch.ones(L_real, dtype=torch.long)
         
+        # Extract the full age stream (stream 2) for position-dependent age lookups
+        # The age at position p tells us the age when that token occurred
+        age_stream = input_ids[2].tolist()  # Full age stream for all positions
+        
         return {
             'idx': int(idx),
             'x4': x4[:, :L_real],
@@ -192,6 +196,7 @@ class SequenceGenerator:
             'L_real': L_real,
             'rinpersoon_id': int(sequence_id),
             'full_sequence': input_ids[0].tolist(),  # Store full original sequence for saving
+            'age_stream': age_stream,  # Full age stream for position-dependent age lookups
         }
     
     def _select_people(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -380,6 +385,66 @@ class SequenceGenerator:
         
         return original_path
     
+    def _save_ages(
+        self,
+        people_data: List[Dict],
+        buddy_data: List[Dict],
+        selected_indices: np.ndarray,
+        buddy_indices: np.ndarray,
+    ) -> str:
+        """
+        Save full age streams to Parquet file.
+        
+        Creates ages.parquet with columns:
+        - local_idx: 0 to n-1 for persons, n to 2n-1 for buddies
+        - h5_idx: Original index in h5 file
+        - rinpersoon_id: sequence_id from h5 file
+        - age_stream: Comma-separated ages for each position in the sequence
+        - real_length: Real length of the sequence (before padding)
+        - is_buddy: Whether this is a buddy sequence
+        
+        The age at any prefix_len p can be looked up as age_stream[p-1].
+        This allows computing decade buckets that vary by prefix position.
+        """
+        records = []
+        
+        # Add persons (indices 0 to n-1)
+        for local_idx, person in enumerate(people_data):
+            records.append({
+                'local_idx': local_idx,
+                'h5_idx': person['idx'],
+                'rinpersoon_id': person['rinpersoon_id'],
+                'age_stream': ','.join(map(str, person['age_stream'])),
+                'real_length': person['L_real'],
+                'is_buddy': False,
+            })
+        
+        # Add buddies (indices n to 2n-1)
+        n = len(people_data)
+        for local_idx, buddy in enumerate(buddy_data):
+            records.append({
+                'local_idx': n + local_idx,
+                'h5_idx': buddy['idx'],
+                'rinpersoon_id': buddy['rinpersoon_id'],
+                'age_stream': ','.join(map(str, buddy['age_stream'])),
+                'real_length': buddy['L_real'],
+                'is_buddy': True,
+            })
+        
+        # Save to Parquet
+        df = pd.DataFrame(records)
+        ages_path = os.path.join(self.config.output_dir, 'ages.parquet')
+        table = pa.Table.from_pandas(df)
+        pq.write_table(table, ages_path)
+        
+        # Log some statistics about ages for persons only
+        persons_df = df[~df['is_buddy']]
+        logger.info(f"Saved ages: {ages_path}")
+        logger.info(f"  Total: {len(records)} (Persons: {len(people_data)}, Buddies: {len(buddy_data)})")
+        logger.info(f"  Age streams stored for position-dependent decade lookup")
+        
+        return ages_path
+    
     def generate(self):
         """Run sequence generation and save to Parquet files."""
         logger.info("="*60)
@@ -409,6 +474,12 @@ class SequenceGenerator:
         # Save original sequences first
         logger.info("Saving original sequences...")
         original_path = self._save_original_sequences(
+            people_data, buddy_data, selected_indices, buddy_indices
+        )
+        
+        # Save ages to separate file
+        logger.info("Saving ages...")
+        ages_path = self._save_ages(
             people_data, buddy_data, selected_indices, buddy_indices
         )
         

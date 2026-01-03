@@ -28,6 +28,7 @@ models:
 #   generation: SLURM settings for generation job
 #   statistics: SLURM settings for statistics job
 #   pad_exclusion_mode: 'seq1', 'seq2', or 'both' (default: 'both')
+#   compute_by_age: true/false - compute statistics grouped by age decade (default: false)
 
 experiments:
   # Quick test experiment
@@ -35,24 +36,42 @@ experiments:
     c: 100
     h: 20
     g: 100
+    compute_by_age: true  # Enable by-age statistics
     # Optional SLURM overrides
     generation:
       time: "24:00:00"
     statistics:
       time: "4:00:00"
+      partition: "rome"
 
   # Medium scale experiment
   - n: 100
     c: 1000
     h: 20
     g: 100
+    compute_by_age: true  # Enable by-age statistics
     generation:
       time: "48:00:00"
       mem: "64G"
     statistics:
       time: "12:00:00"
       mem: "64G"
+      partition: "rome"
 
+  - n: 100
+    c: 100
+    h: 20
+    g: 100
+    exclude_padding: False
+    generation_batch_size: 64
+    compute_by_age: true  # Enable by-age statistics
+    generation:
+      time: "48:00:00"
+      mem: "64G"
+    statistics:
+      time: "12:00:00"
+      mem: "64G"
+      partition: "rome"
   # Large scale experiment (uncomment when ready)
   # - n: 1000
   #   c: 1000

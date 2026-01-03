@@ -133,7 +133,8 @@ def load_experiment_config(exp_name: str, base_dir: Path) -> dict:
 
 def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None, 
                              exclude_padding: bool = True,
-                             generation_batch_size: int = 64) -> dict:
+                             generation_batch_size: int = 64,
+                             compute_by_age: bool = False) -> dict:
     """Create experiment configuration from parameters."""
     if name is None:
         name = f"exp_n{n}_c{c}_h{h}_g{g}"
@@ -154,6 +155,7 @@ def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None,
         'prefix_lengths': prefix_lengths,
         'exclude_padding': exclude_padding,
         'generation_batch_size': generation_batch_size,
+        'compute_by_age': compute_by_age,
         'top_k': 20,
         'temperature': 1.0,
         'seed': 42,
@@ -176,6 +178,9 @@ def create_experiment_config(n: int, c: int, h: int, g: int, name: str = None,
 
 def generate_run_config(model_config: dict, exp_config: dict, output_dir: Path) -> Path:
     """Generate combined config for a run."""
+    n = exp_config.get('num_people', 10)
+    c = exp_config.get('num_generations', 100)
+    
     run_config = {
         **exp_config,
         'model_name': model_config['model_name'],
@@ -185,8 +190,13 @@ def generate_run_config(model_config: dict, exp_config: dict, output_dir: Path) 
         'output_dir': str(output_dir),
         'sequences_path': str(output_dir / 'generated_sequences.parquet'),
         'original_sequences_path': str(output_dir / 'original_sequences.parquet'),
-        'statistics_path': str(output_dir / 'statistics_full.csv'),
-        'statistics_summary_path': str(output_dir / 'statistics_summary.csv'),
+        'ages_path': str(output_dir / 'ages.parquet'),
+        # Include n and c in statistics filenames
+        'statistics_path': str(output_dir / f'statistics_n{n}_c{c}_full.csv'),
+        'statistics_summary_path': str(output_dir / f'statistics_n{n}_c{c}_summary.csv'),
+        # By-age statistics paths
+        'statistics_by_age_path': str(output_dir / f'statistics_by_age_n{n}_c{c}_full.csv'),
+        'statistics_by_age_summary_path': str(output_dir / f'statistics_by_age_n{n}_c{c}_summary.csv'),
     }
     
     config_path = output_dir / 'run_config.yaml'
@@ -356,6 +366,7 @@ def generate_from_config(
             name=exp_def.get('name'),
             exclude_padding=exp_def.get('exclude_padding', True),
             generation_batch_size=exp_def.get('generation_batch_size', 64),
+            compute_by_age=exp_def.get('compute_by_age', False),
         )
         
         # Allow experiment-specific overrides
@@ -367,6 +378,7 @@ def generate_from_config(
         print(f"\nExperiment: {exp_config['experiment_name']}")
         print(f"  n={exp_def['n']}, c={exp_def['c']}, h={exp_def['h']}, g={exp_def['g']}")
         print(f"  exclude_padding={exp_config['exclude_padding']}, batch_size={exp_config['generation_batch_size']}")
+        print(f"  compute_by_age={exp_config['compute_by_age']}")
         print("-" * 40)
         
         scripts = generate_slurm_scripts(
