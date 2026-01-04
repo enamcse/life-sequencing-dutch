@@ -531,20 +531,38 @@ class StatisticsComputer:
             decade_end = decade_start + 9
             return f"{decade_start}-{decade_end}"
     
-    def _compute_comparison_stats_by_age(
-        self,
-        df: pd.DataFrame,
-        prefix_len: int,
-        n_people: int
-    ) -> List[Dict]:
+    def _compute_by_age_statistics(self, df: pd.DataFrame, prefix_lengths: List[int], n_people: int) -> Tuple[str, str]:
         """
-        Compute all 12 comparison statistics grouped by age decade.
+        Compute statistics grouped by age decade and save to CSV.
         
-        The age decade is determined by the age at position prefix_len - 1,
-        which is the last token before generation starts. This means the same
-        person can contribute to different decade buckets at different prefix_lens.
+        This aggregates statistics ACROSS all prefix_lens into decade buckets.
+        The first column is 'decade' (e.g., "0-9", "10-19"), not 'prefix_len'.
+        
+        For each generation record:
+        - Look up the age at position (prefix_len - 1) for that person
+        - Map the age to a decade bucket
+        - Accumulate that record's statistics into the decade bucket
+        
+        This gives us a view of model performance grouped by life stage,
+        allowing us to see how well the model predicts tokens for different age groups.
+        
+        Returns:
+            Tuple of (full_path, summary_path)
         """
-        rows = []
+        if self.ages_df is None or not self.decade_buckets:
+            logger.warning("Ages not loaded, skipping by-age statistics")
+            return None, None
+        
+        logger.info("="*60)
+        logger.info("Computing By-Age Statistics")
+        logger.info(f"  Decade buckets: {self.decade_buckets}")
+        logger.info(f"  Aggregating across {len(prefix_lengths)} prefix lengths")
+        logger.info("="*60)
+        
+        # =====================================================================
+        # Step 1: Compute comparison statistics by decade
+        # =====================================================================
+        comparison_rows = []
         
         for row_type in self.ROW_TYPES:
             # Parse row type
@@ -554,20 +572,26 @@ class StatisticsComputer:
             include_pad = parts[-1] == 'pad' and parts[-2] == 'with'
             exclude_pad = not include_pad
             
-            # Initialize accumulators for each decade bucket
-            decade_stats = {bucket: {'num': 0, 'den': 0} for bucket in self.decade_buckets}
+            # Initialize accumulators: decade -> person_idx -> {num, den}
+            decade_person_stats = {
+                bucket: {i: {'num': 0, 'den': 0} for i in range(n_people)}
+                for bucket in self.decade_buckets
+            }
             
-            # Process each record
-            for _, record in df.iterrows():
+            # Process ALL records across all prefix lengths
+            for _, record in tqdm(df.iterrows(), total=len(df), 
+                                  desc=f"By-age {row_type}", leave=False):
                 person_idx = record['person_idx']
                 buddy_idx = record.get('buddy_idx', person_idx)
+                prefix_len = record['prefix_len']
                 
                 # Get the age at this specific prefix position for this person
                 age_at_prefix = self._get_age_at_prefix(person_idx, prefix_len)
                 decade_bucket = self._get_decade_bucket_for_age(age_at_prefix)
                 
-                if decade_bucket not in decade_stats:
-                    decade_stats[decade_bucket] = {'num': 0, 'den': 0}
+                # Skip unknown decades
+                if decade_bucket not in decade_person_stats:
+                    continue
                 
                 generated = parse_tokens(record['generated_tokens'])
                 
@@ -593,157 +617,123 @@ class StatisticsComputer:
                         self.config.pad_exclusion_mode
                     )
                 
-                decade_stats[decade_bucket]['num'] += num
-                decade_stats[decade_bucket]['den'] += den
+                decade_person_stats[decade_bucket][person_idx]['num'] += num
+                decade_person_stats[decade_bucket][person_idx]['den'] += den
             
-            # Build row - note: we now organize by decade, not by prefix_len
-            row = {
-                'prefix_len': prefix_len,
-                'row_type': row_type,
-                'token_id': None,
-                'token': None,
-            }
-            
-            total_num = 0
-            total_den = 0
-            
-            for bucket in self.decade_buckets:
-                bucket_key = bucket.replace('-', '_').replace('+', 'plus')  # e.g., "0_9", "10_19", "100plus"
-                row[f'{bucket_key}_num'] = decade_stats[bucket]['num']
-                row[f'{bucket_key}_den'] = decade_stats[bucket]['den']
-                total_num += decade_stats[bucket]['num']
-                total_den += decade_stats[bucket]['den']
-            
-            row['total_num'] = total_num
-            row['total_den'] = total_den
-            
-            rows.append(row)
+            # Build one row per decade for this row_type
+            for decade_bucket in self.decade_buckets:
+                row = {
+                    'decade': decade_bucket,
+                    'row_type': row_type,
+                    'token_id': None,
+                    'token': None,
+                }
+                
+                total_num = 0
+                total_den = 0
+                
+                for i in range(n_people):
+                    row[f'p{i}_num'] = decade_person_stats[decade_bucket][i]['num']
+                    row[f'p{i}_den'] = decade_person_stats[decade_bucket][i]['den']
+                    total_num += decade_person_stats[decade_bucket][i]['num']
+                    total_den += decade_person_stats[decade_bucket][i]['den']
+                
+                row['total_num'] = total_num
+                row['total_den'] = total_den
+                
+                comparison_rows.append(row)
         
-        return rows
-    
-    def _compute_token_frequency_stats_by_age(
-        self,
-        df: pd.DataFrame,
-        prefix_len: int,
-        n_people: int
-    ) -> List[Dict]:
-        """
-        Compute token frequency statistics grouped by age decade.
+        # =====================================================================
+        # Step 2: Compute token frequency statistics by decade
+        # =====================================================================
+        logger.info("Computing token frequencies by decade...")
         
-        The age decade is determined by the age at position prefix_len - 1,
-        which is the last token before generation starts. Generated tokens
-        are accumulated into the decade bucket corresponding to that age.
-        """
-        rows = []
+        # Collect generated tokens: decade -> person_idx -> list of token lists
+        decade_person_tokens = {
+            bucket: {i: [] for i in range(n_people)}
+            for bucket in self.decade_buckets
+        }
         
-        # Collect generated tokens per decade bucket
-        decade_tokens = {bucket: [] for bucket in self.decade_buckets}
-        
-        for _, record in df.iterrows():
+        for _, record in tqdm(df.iterrows(), total=len(df), 
+                              desc="By-age token freq", leave=False):
             person_idx = record['person_idx']
+            prefix_len = record['prefix_len']
             
             # Get the age at this specific prefix position for this person
             age_at_prefix = self._get_age_at_prefix(person_idx, prefix_len)
             decade_bucket = self._get_decade_bucket_for_age(age_at_prefix)
             
-            if decade_bucket not in decade_tokens:
-                decade_tokens[decade_bucket] = []
+            if decade_bucket not in decade_person_tokens:
+                continue
             
             generated = parse_tokens(record['generated_tokens'])
-            decade_tokens[decade_bucket].append(generated)
+            decade_person_tokens[decade_bucket][person_idx].append(generated)
         
-        # Compute frequencies per decade bucket
-        decade_freqs = {}
-        decade_totals = {}
+        # Compute frequencies per decade and person
+        decade_person_freqs = {}
+        decade_person_totals = {}
         
         for bucket in self.decade_buckets:
-            freq, total = compute_token_frequencies(decade_tokens.get(bucket, []))
-            decade_freqs[bucket] = freq
-            decade_totals[bucket] = total
+            decade_person_freqs[bucket] = {}
+            decade_person_totals[bucket] = {}
+            for i in range(n_people):
+                freq, total = compute_token_frequencies(decade_person_tokens[bucket][i])
+                decade_person_freqs[bucket][i] = freq
+                decade_person_totals[bucket][i] = total
         
         # Determine which tokens to include
         if self.config.top_n_tokens > 0:
             all_freqs = Counter()
             for bucket in self.decade_buckets:
-                all_freqs.update(decade_freqs[bucket])
+                for i in range(n_people):
+                    all_freqs.update(decade_person_freqs[bucket][i])
             top_tokens = [tid for tid, _ in all_freqs.most_common(self.config.top_n_tokens)]
         else:
             top_tokens = self.all_token_ids
         
-        # Build rows for each token
-        for token_id in top_tokens:
-            row = {
-                'prefix_len': prefix_len,
-                'row_type': 'token_frequency',
-                'token_id': token_id,
-                'token': self.id_to_token.get(token_id, f'UNK_{token_id}'),
-            }
-            
-            total_num = 0
-            total_den = 0
-            
-            for bucket in self.decade_buckets:
-                bucket_key = bucket.replace('-', '_').replace('+', 'plus')
-                num = decade_freqs[bucket].get(token_id, 0)
-                den = decade_totals[bucket]
-                row[f'{bucket_key}_num'] = num
-                row[f'{bucket_key}_den'] = den
-                total_num += num
-                total_den += den
-            
-            row['total_num'] = total_num
-            row['total_den'] = total_den
-            
-            rows.append(row)
+        # Build frequency rows: one row per (decade, token_id)
+        freq_rows = []
+        for decade_bucket in self.decade_buckets:
+            for token_id in top_tokens:
+                row = {
+                    'decade': decade_bucket,
+                    'row_type': 'token_frequency',
+                    'token_id': token_id,
+                    'token': self.id_to_token.get(token_id, f'UNK_{token_id}'),
+                }
+                
+                total_num = 0
+                total_den = 0
+                
+                for i in range(n_people):
+                    num = decade_person_freqs[decade_bucket][i].get(token_id, 0)
+                    den = decade_person_totals[decade_bucket][i]
+                    row[f'p{i}_num'] = num
+                    row[f'p{i}_den'] = den
+                    total_num += num
+                    total_den += den
+                
+                row['total_num'] = total_num
+                row['total_den'] = total_den
+                
+                freq_rows.append(row)
         
-        return rows
-    
-    def _compute_by_age_statistics(self, df: pd.DataFrame, prefix_lengths: List[int], n_people: int) -> Tuple[str, str]:
-        """
-        Compute statistics grouped by age decade and save to CSV.
+        # =====================================================================
+        # Step 3: Combine and save
+        # =====================================================================
+        all_rows = comparison_rows + freq_rows
         
-        Returns:
-            Tuple of (full_path, summary_path)
-        """
-        if self.ages_df is None or not self.decade_buckets:
-            logger.warning("Ages not loaded, skipping by-age statistics")
-            return None, None
-        
-        logger.info("="*60)
-        logger.info("Computing By-Age Statistics")
-        logger.info(f"  Decade buckets: {self.decade_buckets}")
-        logger.info("="*60)
-        
-        all_rows = []
-        
-        # Process each prefix length
-        for prefix_len in tqdm(prefix_lengths, desc="Computing by-age statistics"):
-            prefix_df = df[df['prefix_len'] == prefix_len]
-            
-            if len(prefix_df) == 0:
-                continue
-            
-            # Compute comparison statistics by age (12 rows)
-            comparison_rows = self._compute_comparison_stats_by_age(prefix_df, prefix_len, n_people)
-            all_rows.extend(comparison_rows)
-            
-            # Compute token frequency statistics by age (V rows)
-            freq_rows = self._compute_token_frequency_stats_by_age(prefix_df, prefix_len, n_people)
-            all_rows.extend(freq_rows)
-        
-        # Convert to DataFrame
         logger.info("Building by-age DataFrame...")
         stats_df = pd.DataFrame(all_rows)
         
-        # Ensure column order
-        base_cols = ['prefix_len', 'row_type', 'token_id', 'token']
-        decade_cols = []
-        for bucket in self.decade_buckets:
-            bucket_key = bucket.replace('-', '_').replace('+', 'plus')
-            decade_cols.extend([f'{bucket_key}_num', f'{bucket_key}_den'])
+        # Ensure column order: decade, row_type, token_id, token, p0_num, p0_den, ..., total_num, total_den
+        base_cols = ['decade', 'row_type', 'token_id', 'token']
+        person_cols = []
+        for i in range(n_people):
+            person_cols.extend([f'p{i}_num', f'p{i}_den'])
         total_cols = ['total_num', 'total_den']
         
-        all_cols = base_cols + decade_cols + total_cols
+        all_cols = base_cols + person_cols + total_cols
         
         # Ensure all columns exist
         for col in all_cols:
@@ -751,6 +741,11 @@ class StatisticsComputer:
                 stats_df[col] = 0
         
         stats_df = stats_df[all_cols]
+        
+        # Sort by decade order, then row_type
+        decade_order = {bucket: i for i, bucket in enumerate(self.decade_buckets)}
+        stats_df['_decade_order'] = stats_df['decade'].map(decade_order)
+        stats_df = stats_df.sort_values(['_decade_order', 'row_type', 'token_id']).drop(columns=['_decade_order'])
         
         # Determine output paths
         output_dir = self.config.output_dir
@@ -774,7 +769,7 @@ class StatisticsComputer:
         
         full_file_size = os.path.getsize(by_age_full_path) / (1024 * 1024)
         
-        # Create and save summary CSV
+        # Create and save summary CSV (without per-person columns)
         summary_cols = base_cols + total_cols
         summary_df = stats_df[summary_cols].copy()
         summary_df['rate'] = summary_df['total_num'] / summary_df['total_den'].replace(0, np.nan)
@@ -785,16 +780,17 @@ class StatisticsComputer:
         summary_file_size = os.path.getsize(by_age_summary_path) / (1024 * 1024)
         
         # Log summary
-        n_comparison_rows = len([r for r in all_rows if r['row_type'] != 'token_frequency'])
-        n_freq_rows = len([r for r in all_rows if r['row_type'] == 'token_frequency'])
+        n_comparison_rows = len(comparison_rows)
+        n_freq_rows = len(freq_rows)
         
         logger.info(f"By-Age Statistics Complete!")
         logger.info(f"  Full output: {by_age_full_path} ({full_file_size:.1f} MB)")
-        logger.info(f"    Columns: {len(stats_df.columns)} ({len(self.decade_buckets)} decades × 2 + 6)")
+        logger.info(f"    Columns: {len(stats_df.columns)} ({n_people} people × 2 + 6)")
+        logger.info(f"    Rows per decade: {12 + len(top_tokens)} (12 comparisons + {len(top_tokens)} tokens)")
         logger.info(f"  Summary output: {by_age_summary_path} ({summary_file_size:.1f} MB)")
-        logger.info(f"  Total rows: {len(all_rows)}")
-        logger.info(f"    - Comparison rows: {n_comparison_rows}")
-        logger.info(f"    - Token frequency rows: {n_freq_rows}")
+        logger.info(f"  Total rows: {len(all_rows)} ({len(self.decade_buckets)} decades)")
+        logger.info(f"    - Comparison rows: {n_comparison_rows} ({len(self.decade_buckets)} decades × 12)")
+        logger.info(f"    - Token frequency rows: {n_freq_rows} ({len(self.decade_buckets)} decades × {len(top_tokens)} tokens)")
         
         return by_age_full_path, by_age_summary_path
 
