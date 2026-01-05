@@ -16,6 +16,7 @@ gen_eval/
 ├── config/
 │   ├── models_config.yaml        # Define all models in one file
 │   ├── experiments_config.yaml   # Define all experiments in one file
+│   ├── events_config.yaml        # Life events config for plotting
 │   ├── models/                   # Individual model configurations
 │   │   └── model_v1_gen_20251117/
 │   │       ├── model.ckpt -> /path/to/checkpoint
@@ -29,8 +30,9 @@ gen_eval/
 │   ├── submit_jobs.sh            # Submit SLURM jobs
 │   └── check_progress.py         # Monitor job progress
 ├── src/
-│   ├── generate_sequences.py     # GPU: Generate & save sequences
-│   └── compute_statistics.py     # CPU: Compute all statistics
+│   ├── generate_sequences.py     # Stage 1: Generate & save sequences (GPU)
+│   ├── compute_statistics.py     # Stage 2: Compute all statistics (CPU)
+│   └── plot_statistics.py        # Stage 3: Generate sanity check plots
 └── slurm_scripts/                # Generated SLURM scripts
 ```
 
@@ -129,31 +131,97 @@ position-dependent decade bucket assignment for by-age statistics.
 
 When `compute_by_age: true` is set, additional statistics files are generated with data grouped by age decade.
 
-**Key concept: Position-dependent age buckets**
+**Key concept: Aggregation by life stage, not sequence position**
 
-The age decade for each generation is determined by the age at position `prefix_len - 1` (the last token before generation starts). This means:
-- The **same person** can contribute to **different decade buckets** at different prefix_lens
-- If a person is age 5 at prefix_len 101 and age 15 at prefix_len 501, they contribute to "0-9" bucket for the first block and "10-19" for the second
+The by-age statistics aggregate data ACROSS all prefix_lens into decade buckets based on age at each generation point:
+- For each generation record, we look up the age at position `prefix_len - 1` (the last token before generation)
+- That age determines which decade bucket (0-9, 10-19, ..., 90-99, 100+) the record contributes to
+- Statistics are then grouped by decade, giving a view of model performance by life stage
+
+**Why this matters:**
+- Regular statistics (by prefix_len) mix different life stages together
+- A person's sequence at prefix_len 101 might be age 5, while another person at the same prefix_len might be age 45
+- By-age statistics separate these, so we can see how well the model predicts tokens for teenagers vs. middle-aged people
+- For example, education-related tokens (CE/CITO scores) should appear more in the 10-19 decade since exams happen around ages 15-18
 
 **Example:**
 ```
-Original sequence:    [CLS] tok1 tok2 tok3 tok4 tok5 ...
-Age stream:           0     0    2    3    5    7    ...
-Prefix_len=3 → age at position 2 → age=2 → decade "0-9"
-Prefix_len=5 → age at position 4 → age=5 → decade "0-9"
-Prefix_len=6 → age at position 5 → age=7 → decade "0-9"
+Person A: prefix_len=101, age at position 100 = 5  → contributes to "0-9"
+Person A: prefix_len=501, age at position 500 = 25 → contributes to "20-29"
+Person B: prefix_len=101, age at position 100 = 45 → contributes to "40-49"
 ```
 
 **Output files:**
 
 1. **`statistics_by_age_n{n}_c{c}_full.csv`** - Statistics grouped by decade
-   - Columns: `prefix_len, row_type, token_id, token, 0_9_num, 0_9_den, 10_19_num, 10_19_den, ..., 100plus_num, 100plus_den, total_num, total_den`
-   - Instead of per-person columns, has per-decade columns
+   - Columns: `decade, row_type, token_id, token, p0_num, p0_den, p1_num, p1_den, ..., total_num, total_den`
+   - First column is `decade` (e.g., "0-9", "10-19") instead of `prefix_len`
+   - Same per-person columns as regular statistics
 
-2. **`statistics_by_age_n{n}_c{c}_summary.csv`** - Summary of by-age statistics
-   - Columns: `prefix_len, row_type, token_id, token, total_num, total_den, rate`
+2. **`statistics_by_age_n{n}_c{c}_summary.csv`** - Summary by decade
+   - Columns: `decade, row_type, token_id, token, total_num, total_den, rate`
+   - Same structure as regular summary, but grouped by decade
+
+3. **`token_counts_by_decade_n{n}_c{c}.csv`** - Raw token counts spreadsheet
+   - Columns: `decade, N_d, token_id, token, simulated_count, real_count`
+   - `N_d`: Number of (person, prefix_len) combinations contributing to this decade
+   - `simulated_count`: Total count of this token in simulated sequences for this decade
+   - `real_count`: Total count of this token in real sequences for this decade
+   - Expected totals: `real = N_d × horizon`, `simulated = N_d × horizon × n_generations`
+
+4. **`decade_summary_n{n}_c{c}.csv`** - Per-decade summary
+   - Columns: `decade, N_d, total_real_tokens, total_simulated_tokens, expected_real_tokens, expected_simulated_tokens, unique_real_tokens, unique_simulated_tokens`
+   - High-level sanity check that token totals match expectations
 
 This allows analysis of how the model performs across different age groups (0-9, 10-19, 20-29, ..., 90-99, 100+ years old).
+
+### Stage 3: Plotting (Optional)
+
+The plotting stage generates visualization for sanity checking:
+
+```bash
+# Generate plots from token counts
+python -m pop2vec.llm.src.new_code.gen_eval.src.plot_statistics \
+    --config run_config.yaml
+
+# Or specify files directly
+python -m pop2vec.llm.src.new_code.gen_eval.src.plot_statistics \
+    --token_counts token_counts_by_decade_n100_c100.csv \
+    --events_config config/events_config.yaml \
+    --output_dir output/plots
+```
+
+**Output files:**
+- `token_freq_{event}_by_decade.png` - Line plot per life event (real vs simulated)
+- `token_freq_{event}_by_decade_log.png` - Log scale version
+- `token_freq_all_events_by_decade.png` - All events in one plot
+- `real_vs_simulated_scatter.png` - Scatter plot for calibration check
+
+**Events Configuration (`config/events_config.yaml`):**
+
+Life events map to multiple token IDs (e.g., different death-related tokens):
+
+```yaml
+life_events:
+  death:
+    tokens: [1234, 1235, 1236]  # Token IDs for death-related events
+    color: "#e41a1c"
+    label: "Death"
+  retirement:
+    tokens: [2001, 2002, 2003]
+    color: "#377eb8"
+    label: "Retirement"
+  school:
+    tokens: [3001, 3002]
+    color: "#4daf4a"
+    label: "School/Education"
+```
+
+To auto-generate an events config from vocabulary:
+```bash
+python -m pop2vec.llm.src.new_code.gen_eval.src.plot_statistics \
+    --create_events_config --vocab vocab.csv --output events_config.yaml
+```
 
 ### Comparison Types (12 rows)
 
@@ -206,8 +274,14 @@ For each token in the vocabulary:
                         └───────────────────┘              │
                                                            ▼
 ┌─────────────────┐     ┌───────────────────┐     ┌─────────────────┐
-│  Statistics     │◀────│  Compute Stats    │◀────│   Sequences     │
-│    (CSV)        │     │    (CPU)          │     │   (Parquet)     │
+│  Plots (Stage 3)│◀────│  Compute Stats    │◀────│   Sequences     │
+│    (PNG)        │     │  (CPU - Stage 2)  │     │(GPU - Stage 1)  │
+└─────────────────┘     └───────────────────┘     └─────────────────┘
+        │                        │                        │
+        ▼                        ▼                        ▼
+┌─────────────────┐     ┌───────────────────┐     ┌─────────────────┐
+│  token_freq_*   │     │  statistics_*.csv │     │ sequences.pq    │
+│  _by_decade.png │     │  token_counts_*.csv │   │ ages.parquet    │
 └─────────────────┘     └───────────────────┘     └─────────────────┘
 ```
 

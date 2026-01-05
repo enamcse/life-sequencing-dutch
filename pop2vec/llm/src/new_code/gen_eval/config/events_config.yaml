@@ -1,0 +1,73 @@
+# Life Events Configuration for Generative Evaluation Pipeline
+# 
+# This file defines life events to track in the plotting stage.
+# Each event can map to multiple token IDs (e.g., different death-related tokens).
+#
+# To find the correct token IDs for your vocabulary:
+#   1. Look at your vocabulary CSV file (usually vocab.csv)
+#   2. Search for tokens related to each life event
+#   3. Add their IDs to the appropriate event's tokens list
+#
+# You can generate a starting point using:
+#   python plot_statistics.py --create_events_config --vocab vocab.csv --output events_config.yaml
+
+life_events:
+  # Death-related events
+  death:
+    tokens: []  # Add token IDs for death, deceased, mortality, etc.
+    color: "#e41a1c"  # red
+    label: "Death"
+  
+  # Retirement events
+  retirement:
+    tokens: []  # Add token IDs for retirement, pension, etc.
+    color: "#377eb8"  # blue
+    label: "Retirement"
+  
+  # School/Education events
+  school:
+    tokens: []  # Add token IDs for school, education, student, etc.
+    color: "#4daf4a"  # green
+    label: "School/Education"
+  
+  # Marriage events
+  marriage:
+    tokens: []  # Add token IDs for marriage, wedding, etc.
+    color: "#984ea3"  # purple
+    label: "Marriage"
+  
+  # Divorce events
+  divorce:
+    tokens: []  # Add token IDs for divorce, separated, etc.
+    color: "#ff7f00"  # orange
+    label: "Divorce"
+  
+  # Birth/Child events
+  birth:
+    tokens: []  # Add token IDs for birth, newborn, child, etc.
+    color: "#a65628"  # brown
+    label: "Birth of Child"
+  
+  # Employment/Job events
+  employment:
+    tokens: []  # Add token IDs for employed, job, work, etc.
+    color: "#f781bf"  # pink
+    label: "Employment"
+  
+  # Hospitalization events
+  hospital:
+    tokens: []  # Add token IDs for hospital, hospitalized, etc.
+    color: "#999999"  # gray
+    label: "Hospitalization"
+
+# Example with actual token IDs (replace with real values from your vocabulary):
+# 
+# life_events:
+#   death:
+#     tokens: [1234, 1235, 1236]
+#     color: "#e41a1c"
+#     label: "Death"
+#   retirement:
+#     tokens: [2001, 2002, 2003, 2004]
+#     color: "#377eb8"
+#     label: "Retirement"

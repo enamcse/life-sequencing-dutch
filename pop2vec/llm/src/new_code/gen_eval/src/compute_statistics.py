@@ -488,6 +488,54 @@ class StatisticsComputer:
     # By-Age Statistics Computation
     # =========================================================================
     
+    def _get_real_continuation_tokens_by_decade(
+        self, 
+        df: pd.DataFrame, 
+        n_people: int
+    ) -> Dict[str, Dict[int, List[List[int]]]]:
+        """
+        Get real continuation tokens grouped by decade.
+        
+        For each generation record, we look up the real continuation tokens
+        (from original_sequences) and group them by the decade of the person
+        at that prefix position.
+        
+        Returns:
+            decade -> person_idx -> list of token lists
+        """
+        decade_person_real_tokens = {
+            bucket: {i: [] for i in range(n_people)}
+            for bucket in self.decade_buckets
+        }
+        
+        # Track which (person_idx, prefix_len) combinations we've already processed
+        # to avoid duplicating real tokens across multiple generations
+        seen_combinations = set()
+        
+        for _, record in df.iterrows():
+            person_idx = record['person_idx']
+            prefix_len = record['prefix_len']
+            
+            # Only count real tokens once per (person, prefix_len) combination
+            key = (person_idx, prefix_len)
+            if key in seen_combinations:
+                continue
+            seen_combinations.add(key)
+            
+            # Get the age at this prefix position
+            age_at_prefix = self._get_age_at_prefix(person_idx, prefix_len)
+            decade_bucket = self._get_decade_bucket_for_age(age_at_prefix)
+            
+            if decade_bucket not in decade_person_real_tokens:
+                continue
+            
+            # Get real continuation tokens
+            real_tokens = self._get_continuation(person_idx, prefix_len, self.horizon)
+            if real_tokens:
+                decade_person_real_tokens[decade_bucket][person_idx].append(real_tokens)
+        
+        return decade_person_real_tokens
+    
     def _get_age_at_prefix(self, person_idx: int, prefix_len: int) -> int:
         """
         Get age at a specific prefix position for a person.
@@ -792,7 +840,149 @@ class StatisticsComputer:
         logger.info(f"    - Comparison rows: {n_comparison_rows} ({len(self.decade_buckets)} decades × 12)")
         logger.info(f"    - Token frequency rows: {n_freq_rows} ({len(self.decade_buckets)} decades × {len(top_tokens)} tokens)")
         
+        # =====================================================================
+        # Step 4: Token Counts Spreadsheet with N_d and Real/Simulated Counts
+        # =====================================================================
+        self._compute_token_counts_spreadsheet(
+            df, decade_person_tokens, n_people, n_generations, output_dir
+        )
+        
         return by_age_full_path, by_age_summary_path
+    
+    def _compute_token_counts_spreadsheet(
+        self,
+        df: pd.DataFrame,
+        decade_person_simulated_tokens: Dict[str, Dict[int, List[List[int]]]],
+        n_people: int,
+        n_generations: int,
+        output_dir: str
+    ):
+        """
+        Compute and save a token counts spreadsheet with:
+        - N_d: Number of people contributing to each decade (rows)
+        - For each token: simulated_count, real_count
+        - Expected totals: real = N_d × horizon, simulated = N_d × horizon × n_generations
+        
+        Output format:
+            decade, N_d, token_id, token, simulated_count, real_count
+        
+        This provides a clean view of raw token counts for sanity checking.
+        """
+        logger.info("="*60)
+        logger.info("Computing Token Counts Spreadsheet")
+        logger.info("="*60)
+        
+        # Get real continuation tokens by decade
+        decade_person_real_tokens = self._get_real_continuation_tokens_by_decade(df, n_people)
+        
+        # Compute N_d: number of unique (person, prefix) combinations per decade
+        # This represents the number of "life segments" in each decade
+        decade_n_d = {}
+        seen_per_decade = {bucket: set() for bucket in self.decade_buckets}
+        
+        for _, record in df.iterrows():
+            person_idx = record['person_idx']
+            prefix_len = record['prefix_len']
+            
+            age_at_prefix = self._get_age_at_prefix(person_idx, prefix_len)
+            decade_bucket = self._get_decade_bucket_for_age(age_at_prefix)
+            
+            if decade_bucket in seen_per_decade:
+                seen_per_decade[decade_bucket].add((person_idx, prefix_len))
+        
+        for bucket in self.decade_buckets:
+            decade_n_d[bucket] = len(seen_per_decade[bucket])
+        
+        # Compute token frequencies for simulated and real
+        rows = []
+        
+        for decade_bucket in self.decade_buckets:
+            n_d = decade_n_d[decade_bucket]
+            
+            if n_d == 0:
+                continue
+            
+            # Aggregate simulated tokens across all people for this decade
+            simulated_counter = Counter()
+            total_simulated_tokens = 0
+            for person_idx in range(n_people):
+                for token_list in decade_person_simulated_tokens[decade_bucket][person_idx]:
+                    simulated_counter.update(token_list)
+                    total_simulated_tokens += len(token_list)
+            
+            # Aggregate real tokens across all people for this decade
+            real_counter = Counter()
+            total_real_tokens = 0
+            for person_idx in range(n_people):
+                for token_list in decade_person_real_tokens[decade_bucket][person_idx]:
+                    real_counter.update(token_list)
+                    total_real_tokens += len(token_list)
+            
+            # Get all tokens that appear in either simulated or real
+            all_tokens = set(simulated_counter.keys()) | set(real_counter.keys())
+            
+            # Build rows for this decade
+            for token_id in sorted(all_tokens):
+                rows.append({
+                    'decade': decade_bucket,
+                    'N_d': n_d,
+                    'token_id': token_id,
+                    'token': self.id_to_token.get(token_id, f'UNK_{token_id}'),
+                    'simulated_count': simulated_counter.get(token_id, 0),
+                    'real_count': real_counter.get(token_id, 0),
+                })
+            
+            # Log expected vs actual totals for this decade
+            expected_real = n_d * self.horizon
+            expected_simulated = n_d * self.horizon * n_generations
+            logger.info(f"  Decade {decade_bucket}: N_d={n_d}")
+            logger.info(f"    Real tokens: {total_real_tokens} (expected: {expected_real})")
+            logger.info(f"    Simulated tokens: {total_simulated_tokens} (expected: {expected_simulated})")
+        
+        # Create DataFrame
+        counts_df = pd.DataFrame(rows)
+        
+        # Save to CSV
+        counts_path = os.path.join(output_dir, f'token_counts_by_decade_n{n_people}_c{n_generations}.csv')
+        logger.info(f"Saving token counts spreadsheet: {counts_path}")
+        counts_df.to_csv(counts_path, index=False)
+        
+        file_size = os.path.getsize(counts_path) / (1024 * 1024)
+        logger.info(f"  Size: {file_size:.1f} MB")
+        logger.info(f"  Rows: {len(counts_df)}")
+        logger.info(f"  Decades with data: {len([d for d in self.decade_buckets if decade_n_d.get(d, 0) > 0])}")
+        
+        # Also save a summary with just decade-level info
+        decade_summary_rows = []
+        for decade_bucket in self.decade_buckets:
+            n_d = decade_n_d[decade_bucket]
+            if n_d == 0:
+                continue
+            
+            # Sum up all tokens for this decade
+            decade_rows = counts_df[counts_df['decade'] == decade_bucket]
+            total_simulated = decade_rows['simulated_count'].sum()
+            total_real = decade_rows['real_count'].sum()
+            
+            decade_summary_rows.append({
+                'decade': decade_bucket,
+                'N_d': n_d,
+                'total_real_tokens': total_real,
+                'total_simulated_tokens': total_simulated,
+                'expected_real_tokens': n_d * self.horizon,
+                'expected_simulated_tokens': n_d * self.horizon * n_generations,
+                'unique_real_tokens': len(decade_rows[decade_rows['real_count'] > 0]),
+                'unique_simulated_tokens': len(decade_rows[decade_rows['simulated_count'] > 0]),
+            })
+        
+        decade_summary_df = pd.DataFrame(decade_summary_rows)
+        summary_path = os.path.join(output_dir, f'decade_summary_n{n_people}_c{n_generations}.csv')
+        logger.info(f"Saving decade summary: {summary_path}")
+        decade_summary_df.to_csv(summary_path, index=False)
+        
+        logger.info("Token Counts Spreadsheet Complete!")
+        
+        return counts_path, summary_path
 
     def compute(self):
         """Compute all statistics and save to CSV."""
