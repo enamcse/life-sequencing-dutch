@@ -163,21 +163,48 @@ Person B: prefix_len=101, age at position 100 = 45 → contributes to "40-49"
    - Same structure as regular summary, but grouped by decade
 
 3. **`token_counts_by_decade_n{n}_c{c}.csv`** - Raw token counts spreadsheet
-   - Columns: `decade, N_d, token_id, token, simulated_count, real_count`
+   - Columns: `decade, N_d, unique_people, token_id, token, simulated_count, real_count`
    - `N_d`: Number of (person, prefix_len) combinations contributing to this decade
+   - `unique_people`: Number of distinct people contributing to this decade
    - `simulated_count`: Total count of this token in simulated sequences for this decade
    - `real_count`: Total count of this token in real sequences for this decade
    - Expected totals: `real = N_d × horizon`, `simulated = N_d × horizon × n_generations`
+   - Note: Sum of `unique_people` across decades may exceed `n` since a person ages through multiple decades
 
 4. **`decade_summary_n{n}_c{c}.csv`** - Per-decade summary
-   - Columns: `decade, N_d, total_real_tokens, total_simulated_tokens, expected_real_tokens, expected_simulated_tokens, unique_real_tokens, unique_simulated_tokens`
+   - Columns: `decade, N_d, unique_people, total_real_tokens, total_simulated_tokens, expected_real_tokens, expected_simulated_tokens, unique_real_tokens, unique_simulated_tokens`
    - High-level sanity check that token totals match expectations
+
+5. **`age_progression_n{n}_c{c}.csv`** - Age progression by person and prefix_len
+   - Columns: `prefix_len, p0, p1, p2, ..., p{n-1}`
+   - Each row shows which decade each person falls into at that prefix position
+   - Example:
+     ```
+     prefix_len, p0,   p1,    p2,    ...
+     1,          0-9,  0-9,   0-9,   ...
+     101,        0-9,  30-39, 10-19, ...
+     201,        0-9,  30-39, 20-29, ...
+     301,        0-9,  40-49, 20-29, ...
+     ```
+   - Useful for understanding age distribution across the cohort and verifying age data
 
 This allows analysis of how the model performs across different age groups (0-9, 10-19, 20-29, ..., 90-99, 100+ years old).
 
 ### Stage 3: Plotting (Optional)
 
-The plotting stage generates visualization for sanity checking:
+The plotting stage generates visualization for sanity checking. Plots use **frequency per million tokens** on the y-axis:
+
+```
+Real frequency = (real_count / (N_d × horizon)) × 1,000,000
+Simulated frequency = (simulated_count / (N_d × horizon × c)) × 1,000,000
+```
+
+Where:
+- `N_d` = number of (person, prefix_len) combinations in each decade
+- `horizon` = tokens per generation window (default 20)
+- `c` = number of generations per (person, prefix_len) combination
+
+This gives "how many times token X appeared out of every million tokens generated/observed".
 
 ```bash
 # Generate plots from token counts
@@ -188,7 +215,8 @@ python -m pop2vec.llm.src.new_code.gen_eval.src.plot_statistics \
 python -m pop2vec.llm.src.new_code.gen_eval.src.plot_statistics \
     --token_counts token_counts_by_decade_n100_c100.csv \
     --events_config config/events_config.yaml \
-    --output_dir output/plots
+    --output_dir output/plots \
+    --n_generations 100 --horizon 20
 ```
 
 **Output files:**

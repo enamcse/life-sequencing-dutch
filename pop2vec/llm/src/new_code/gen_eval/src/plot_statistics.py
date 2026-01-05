@@ -5,6 +5,15 @@ Plot Statistics - Visualization Stage for Generative Evaluation Pipeline
 Generates sanity check plots comparing real vs simulated token frequencies by decade.
 Supports configurable life event tokens (e.g., death, retirement, school).
 
+Y-axis uses "Frequency per Million Tokens":
+    Real: (real_count / (N_d × horizon)) × 1,000,000
+    Simulated: (simulated_count / (N_d × horizon × n_generations)) × 1,000,000
+
+Where:
+    - N_d = number of (person, prefix_len) combinations in each decade
+    - horizon = tokens per generation window (default 20)
+    - n_generations = number of generations per (person, prefix_len) combination (c)
+
 Usage:
     python plot_statistics.py --config run_config.yaml
     python plot_statistics.py --token_counts token_counts_by_decade.csv --events_config events.yaml
@@ -28,6 +37,7 @@ Output:
     - Individual plots per life event (token_freq_<event>_by_decade.png)
     - Combined comparison plot (token_freq_all_events_by_decade.png)
     - Log scale versions (_log suffix)
+    - Scatter plot for calibration check (real_vs_simulated_scatter.png)
 """
 
 import argparse
@@ -134,18 +144,52 @@ def aggregate_event_counts(
     return agg_df
 
 
-def compute_frequency_per_person(df: pd.DataFrame, n_generations: int = 100) -> pd.DataFrame:
+def compute_frequency_per_million(
+    df: pd.DataFrame, 
+    n_generations: int = 100,
+    horizon: int = 20
+) -> pd.DataFrame:
     """
-    Compute frequency per person for real and simulated.
+    Compute frequency per million tokens for real and simulated.
     
-    Real: count / N_d
-    Simulated: count / (N_d * n_generations)
+    This gives "how many times token X appeared out of every million tokens".
     
-    This normalizes to "expected events per person-decade".
+    Formulas:
+        Real frequency = (real_count / (N_d × horizon)) × 1,000,000
+        Simulated frequency = (simulated_count / (N_d × horizon × n_generations)) × 1,000,000
+    
+    Where:
+        - N_d = number of (person, prefix_len) combinations in this decade
+        - horizon = tokens generated per generation (default 20)
+        - n_generations = number of generations per (person, prefix_len) combination
+    
+    Total tokens:
+        - Real: N_d × horizon
+        - Simulated: N_d × horizon × n_generations
+    
+    Args:
+        df: DataFrame with columns: decade, N_d, simulated_count, real_count
+        n_generations: Number of generations per person (c)
+        horizon: Number of tokens per generation window (default 20)
+    
+    Returns:
+        DataFrame with added columns: real_freq_per_million, simulated_freq_per_million
     """
     result = df.copy()
-    result['real_freq'] = result['real_count'] / result['N_d'].replace(0, np.nan)
-    result['simulated_freq'] = result['simulated_count'] / (result['N_d'] * n_generations).replace(0, np.nan)
+    
+    # Total tokens in each decade
+    total_real_tokens = result['N_d'] * horizon
+    total_simulated_tokens = result['N_d'] * horizon * n_generations
+    
+    # Frequency per million tokens
+    result['real_freq_per_million'] = (
+        result['real_count'] / total_real_tokens.replace(0, np.nan)
+    ) * 1_000_000
+    
+    result['simulated_freq_per_million'] = (
+        result['simulated_count'] / total_simulated_tokens.replace(0, np.nan)
+    ) * 1_000_000
+    
     return result
 
 
@@ -156,27 +200,32 @@ def plot_event_by_decade(
     color: str,
     output_dir: str,
     n_generations: int = 100,
+    horizon: int = 20,
     log_scale: bool = False
 ):
     """
-    Plot real vs simulated frequency for a single life event by decade.
+    Plot real vs simulated frequency per million tokens for a single life event by decade.
     
     Creates a line plot with two lines:
     - Real frequency (solid line with circles)
-    - Simulated frequency (dashed line with triangles)
+    - Simulated frequency (dashed line with squares)
+    
+    Y-axis: Frequency per million tokens
+        Real = (real_count / (N_d × horizon)) × 1,000,000
+        Simulated = (simulated_count / (N_d × horizon × n_generations)) × 1,000,000
     """
     if df.empty:
         logger.warning(f"No data for event: {event_name}")
         return
     
-    # Compute per-person frequencies
-    plot_df = compute_frequency_per_person(df, n_generations)
+    # Compute frequency per million tokens
+    plot_df = compute_frequency_per_million(df, n_generations, horizon)
     
     fig, ax = plt.subplots(figsize=(12, 6))
     
     decades = plot_df['decade'].tolist()
-    real_freq = plot_df['real_freq'].tolist()
-    simulated_freq = plot_df['simulated_freq'].tolist()
+    real_freq = plot_df['real_freq_per_million'].tolist()
+    simulated_freq = plot_df['simulated_freq_per_million'].tolist()
     
     x = np.arange(len(decades))
     
@@ -187,7 +236,7 @@ def plot_event_by_decade(
             label='Simulated', alpha=0.6)
     
     ax.set_xlabel('Age Decade', fontsize=12)
-    ax.set_ylabel('Frequency per Person', fontsize=12)
+    ax.set_ylabel('Frequency per Million Tokens', fontsize=12)
     ax.set_title(f'{event_label}: Real vs Simulated by Age Decade', fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(decades, rotation=45, ha='right')
@@ -213,15 +262,19 @@ def plot_all_events_comparison(
     events_data: Dict[str, Tuple[pd.DataFrame, str, str]],
     output_dir: str,
     n_generations: int = 100,
+    horizon: int = 20,
     log_scale: bool = False
 ):
     """
     Plot comparison of all life events in a single figure.
     
     Shows real frequencies for all events (solid lines) and simulated (dashed).
+    Y-axis: Frequency per million tokens.
     
     Args:
         events_data: Dict of event_name -> (DataFrame, label, color)
+        n_generations: Number of generations per person (c)
+        horizon: Number of tokens per generation window (default 20)
     """
     if not events_data:
         logger.warning("No events data to plot")
@@ -237,19 +290,19 @@ def plot_all_events_comparison(
         if df.empty:
             continue
         
-        plot_df = compute_frequency_per_person(df, n_generations)
+        plot_df = compute_frequency_per_million(df, n_generations, horizon)
         decades = plot_df['decade'].tolist()
         x = np.arange(len(decades))
         
-        ax_real.plot(x, plot_df['real_freq'].tolist(), 'o-', color=color, 
+        ax_real.plot(x, plot_df['real_freq_per_million'].tolist(), 'o-', color=color, 
                      linewidth=2, markersize=6, label=label, alpha=0.9)
-        ax_sim.plot(x, plot_df['simulated_freq'].tolist(), 's-', color=color,
+        ax_sim.plot(x, plot_df['simulated_freq_per_million'].tolist(), 's-', color=color,
                     linewidth=2, markersize=6, label=label, alpha=0.9)
     
     # Common setup for both axes
     for ax, title in [(ax_real, 'Real Life Events'), (ax_sim, 'Simulated Life Events')]:
         ax.set_xlabel('Age Decade', fontsize=12)
-        ax.set_ylabel('Frequency per Person', fontsize=12)
+        ax.set_ylabel('Frequency per Million Tokens', fontsize=12)
         ax.set_title(title, fontsize=14)
         ax.set_xticks(x)
         ax.set_xticklabels(decades, rotation=45, ha='right')
@@ -274,10 +327,11 @@ def plot_all_events_comparison(
 def plot_real_vs_simulated_scatter(
     events_data: Dict[str, Tuple[pd.DataFrame, str, str]],
     output_dir: str,
-    n_generations: int = 100
+    n_generations: int = 100,
+    horizon: int = 20
 ):
     """
-    Scatter plot of real vs simulated frequencies across all decades and events.
+    Scatter plot of real vs simulated frequencies per million tokens across all decades and events.
     
     Useful for checking overall calibration: points should lie near the diagonal.
     """
@@ -295,12 +349,12 @@ def plot_real_vs_simulated_scatter(
         if df.empty:
             continue
         
-        plot_df = compute_frequency_per_person(df, n_generations)
+        plot_df = compute_frequency_per_million(df, n_generations, horizon)
         
         for _, row in plot_df.iterrows():
-            if pd.notna(row['real_freq']) and pd.notna(row['simulated_freq']):
-                all_real.append(row['real_freq'])
-                all_sim.append(row['simulated_freq'])
+            if pd.notna(row['real_freq_per_million']) and pd.notna(row['simulated_freq_per_million']):
+                all_real.append(row['real_freq_per_million'])
+                all_sim.append(row['simulated_freq_per_million'])
                 colors.append(color)
                 labels.append(f"{label} ({row['decade']})")
     
@@ -316,8 +370,8 @@ def plot_real_vs_simulated_scatter(
     max_val = max(max(all_real), max(all_sim)) * 1.1
     ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, label='Perfect Calibration')
     
-    ax.set_xlabel('Real Frequency', fontsize=12)
-    ax.set_ylabel('Simulated Frequency', fontsize=12)
+    ax.set_xlabel('Real Frequency (per Million Tokens)', fontsize=12)
+    ax.set_ylabel('Simulated Frequency (per Million Tokens)', fontsize=12)
     ax.set_title('Real vs Simulated Frequencies by Decade', fontsize=14)
     ax.set_xlim(0, max_val)
     ax.set_ylim(0, max_val)
@@ -417,7 +471,9 @@ Examples:
     parser.add_argument("--events_config", help="Path to life events config YAML")
     parser.add_argument("--output_dir", help="Output directory for plots")
     parser.add_argument("--n_generations", type=int, default=100,
-                        help="Number of generations per person (default: 100)")
+                        help="Number of generations per person (c) (default: 100)")
+    parser.add_argument("--horizon", type=int, default=20,
+                        help="Number of tokens per generation window (default: 20)")
     parser.add_argument("--create_events_config", action="store_true",
                         help="Create a default events config from vocabulary")
     parser.add_argument("--vocab", help="Path to vocabulary CSV (for --create_events_config)")
@@ -439,8 +495,9 @@ Examples:
             config = yaml.safe_load(f)
         
         output_dir = config.get('output_dir', '.')
-        n_people = config.get('n_people')
-        n_generations = config.get('n_generations', args.n_generations)
+        n_people = config.get('num_people', config.get('n_people'))
+        n_generations = config.get('num_generations', config.get('n_generations', args.n_generations))
+        horizon = config.get('horizon', args.horizon)
         
         # Try to find token counts file
         if args.token_counts:
@@ -479,6 +536,7 @@ Examples:
         events_config_path = args.events_config
         output_dir = args.output_dir or os.path.dirname(token_counts_path) or '.'
         n_generations = args.n_generations
+        horizon = args.horizon
     
     # Load token counts
     token_counts_df = load_token_counts(token_counts_path)
@@ -536,20 +594,22 @@ Examples:
         
         # Plot individual event (linear and log scale)
         plot_event_by_decade(agg_df, event_name, label, color, plots_dir, 
-                            n_generations, log_scale=False)
+                            n_generations, horizon, log_scale=False)
         plot_event_by_decade(agg_df, event_name, label, color, plots_dir,
-                            n_generations, log_scale=True)
+                            n_generations, horizon, log_scale=True)
     
     # Plot comparison of all events
     if events_data:
-        plot_all_events_comparison(events_data, plots_dir, n_generations, log_scale=False)
-        plot_all_events_comparison(events_data, plots_dir, n_generations, log_scale=True)
-        plot_real_vs_simulated_scatter(events_data, plots_dir, n_generations)
+        plot_all_events_comparison(events_data, plots_dir, n_generations, horizon, log_scale=False)
+        plot_all_events_comparison(events_data, plots_dir, n_generations, horizon, log_scale=True)
+        plot_real_vs_simulated_scatter(events_data, plots_dir, n_generations, horizon)
     
     logger.info("="*60)
     logger.info("Plotting Complete!")
     logger.info(f"  Output directory: {plots_dir}")
     logger.info(f"  Events plotted: {len(events_data)}")
+    logger.info(f"  Frequency unit: per million tokens")
+    logger.info(f"  Parameters: n_generations={n_generations}, horizon={horizon}")
     logger.info("="*60)
 
 

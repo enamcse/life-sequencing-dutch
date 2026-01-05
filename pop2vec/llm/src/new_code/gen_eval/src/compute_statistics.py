@@ -847,6 +847,13 @@ class StatisticsComputer:
             df, decade_person_tokens, n_people, n_generations, output_dir
         )
         
+        # =====================================================================
+        # Step 5: Age Progression Spreadsheet
+        # =====================================================================
+        self._compute_age_progression_spreadsheet(
+            df, n_people, n_generations, output_dir
+        )
+        
         return by_age_full_path, by_age_summary_path
     
     def _compute_token_counts_spreadsheet(
@@ -859,14 +866,20 @@ class StatisticsComputer:
     ):
         """
         Compute and save a token counts spreadsheet with:
-        - N_d: Number of people contributing to each decade (rows)
+        - N_d: Number of (person, prefix_len) combinations contributing to each decade
+        - unique_people: Number of distinct people contributing to each decade
         - For each token: simulated_count, real_count
         - Expected totals: real = N_d × horizon, simulated = N_d × horizon × n_generations
         
         Output format:
-            decade, N_d, token_id, token, simulated_count, real_count
+            decade, N_d, unique_people, token_id, token, simulated_count, real_count
         
         This provides a clean view of raw token counts for sanity checking.
+        
+        Note: N_d counts (person, prefix_len) pairs, so one person can contribute
+        multiple times to the same decade at different prefix positions. The sum
+        of unique_people across decades may exceed n_people since a person can
+        appear in multiple decades as they age through life.
         """
         logger.info("="*60)
         logger.info("Computing Token Counts Spreadsheet")
@@ -876,9 +889,11 @@ class StatisticsComputer:
         decade_person_real_tokens = self._get_real_continuation_tokens_by_decade(df, n_people)
         
         # Compute N_d: number of unique (person, prefix) combinations per decade
-        # This represents the number of "life segments" in each decade
+        # Also compute unique_people: number of distinct people per decade
         decade_n_d = {}
-        seen_per_decade = {bucket: set() for bucket in self.decade_buckets}
+        decade_unique_people = {}
+        seen_combinations_per_decade = {bucket: set() for bucket in self.decade_buckets}
+        seen_people_per_decade = {bucket: set() for bucket in self.decade_buckets}
         
         for _, record in df.iterrows():
             person_idx = record['person_idx']
@@ -887,17 +902,20 @@ class StatisticsComputer:
             age_at_prefix = self._get_age_at_prefix(person_idx, prefix_len)
             decade_bucket = self._get_decade_bucket_for_age(age_at_prefix)
             
-            if decade_bucket in seen_per_decade:
-                seen_per_decade[decade_bucket].add((person_idx, prefix_len))
+            if decade_bucket in seen_combinations_per_decade:
+                seen_combinations_per_decade[decade_bucket].add((person_idx, prefix_len))
+                seen_people_per_decade[decade_bucket].add(person_idx)
         
         for bucket in self.decade_buckets:
-            decade_n_d[bucket] = len(seen_per_decade[bucket])
+            decade_n_d[bucket] = len(seen_combinations_per_decade[bucket])
+            decade_unique_people[bucket] = len(seen_people_per_decade[bucket])
         
         # Compute token frequencies for simulated and real
         rows = []
         
         for decade_bucket in self.decade_buckets:
             n_d = decade_n_d[decade_bucket]
+            unique_ppl = decade_unique_people[decade_bucket]
             
             if n_d == 0:
                 continue
@@ -926,6 +944,7 @@ class StatisticsComputer:
                 rows.append({
                     'decade': decade_bucket,
                     'N_d': n_d,
+                    'unique_people': unique_ppl,
                     'token_id': token_id,
                     'token': self.id_to_token.get(token_id, f'UNK_{token_id}'),
                     'simulated_count': simulated_counter.get(token_id, 0),
@@ -935,7 +954,7 @@ class StatisticsComputer:
             # Log expected vs actual totals for this decade
             expected_real = n_d * self.horizon
             expected_simulated = n_d * self.horizon * n_generations
-            logger.info(f"  Decade {decade_bucket}: N_d={n_d}")
+            logger.info(f"  Decade {decade_bucket}: N_d={n_d}, unique_people={unique_ppl}")
             logger.info(f"    Real tokens: {total_real_tokens} (expected: {expected_real})")
             logger.info(f"    Simulated tokens: {total_simulated_tokens} (expected: {expected_simulated})")
         
@@ -956,6 +975,7 @@ class StatisticsComputer:
         decade_summary_rows = []
         for decade_bucket in self.decade_buckets:
             n_d = decade_n_d[decade_bucket]
+            unique_ppl = decade_unique_people[decade_bucket]
             if n_d == 0:
                 continue
             
@@ -967,6 +987,7 @@ class StatisticsComputer:
             decade_summary_rows.append({
                 'decade': decade_bucket,
                 'N_d': n_d,
+                'unique_people': unique_ppl,
                 'total_real_tokens': total_real,
                 'total_simulated_tokens': total_simulated,
                 'expected_real_tokens': n_d * self.horizon,
@@ -980,9 +1001,88 @@ class StatisticsComputer:
         logger.info(f"Saving decade summary: {summary_path}")
         decade_summary_df.to_csv(summary_path, index=False)
         
+        # Log total unique people check
+        total_unique = sum(decade_unique_people.values())
+        logger.info(f"  Total unique_people across decades: {total_unique} (may exceed n={n_people} since people age through multiple decades)")
+        
         logger.info("Token Counts Spreadsheet Complete!")
         
         return counts_path, summary_path
+    
+    def _compute_age_progression_spreadsheet(
+        self,
+        df: pd.DataFrame,
+        n_people: int,
+        n_generations: int,
+        output_dir: str
+    ):
+        """
+        Compute and save an age progression spreadsheet showing which decade
+        each person falls into at each prefix_len.
+        
+        Output format:
+            prefix_len, p0, p1, p2, ..., p{n-1}
+            1, 0-9, 0-9, 0-9, ...
+            101, 0-9, 30-39, 10-19, ...
+            201, 0-9, 30-39, 20-29, ...
+            ...
+        
+        This provides a clear view of how age progression varies across people,
+        useful for sanity checking the age data and understanding the cohort.
+        """
+        logger.info("="*60)
+        logger.info("Computing Age Progression Spreadsheet")
+        logger.info("="*60)
+        
+        # Get unique prefix lengths
+        prefix_lengths = sorted(df['prefix_len'].unique())
+        
+        # Build the spreadsheet: prefix_len -> person_idx -> decade
+        rows = []
+        
+        for prefix_len in prefix_lengths:
+            row = {'prefix_len': prefix_len}
+            
+            for person_idx in range(n_people):
+                age = self._get_age_at_prefix(person_idx, prefix_len)
+                decade = self._get_decade_bucket_for_age(age)
+                row[f'p{person_idx}'] = decade
+            
+            rows.append(row)
+        
+        # Create DataFrame
+        progression_df = pd.DataFrame(rows)
+        
+        # Ensure column order: prefix_len, p0, p1, p2, ...
+        cols = ['prefix_len'] + [f'p{i}' for i in range(n_people)]
+        progression_df = progression_df[cols]
+        
+        # Save to CSV
+        progression_path = os.path.join(output_dir, f'age_progression_n{n_people}_c{n_generations}.csv')
+        logger.info(f"Saving age progression spreadsheet: {progression_path}")
+        progression_df.to_csv(progression_path, index=False)
+        
+        file_size = os.path.getsize(progression_path) / (1024 * 1024)
+        logger.info(f"  Size: {file_size:.1f} MB")
+        logger.info(f"  Rows (prefix_lens): {len(progression_df)}")
+        logger.info(f"  Columns (people): {n_people}")
+        
+        # Log some statistics about age progression
+        # Count how many decades each person spans
+        decades_per_person = []
+        for person_idx in range(n_people):
+            col = f'p{person_idx}'
+            unique_decades = progression_df[col].nunique()
+            decades_per_person.append(unique_decades)
+        
+        avg_decades = np.mean(decades_per_person)
+        min_decades = min(decades_per_person)
+        max_decades = max(decades_per_person)
+        logger.info(f"  Decades spanned per person: min={min_decades}, avg={avg_decades:.1f}, max={max_decades}")
+        
+        logger.info("Age Progression Spreadsheet Complete!")
+        
+        return progression_path
 
     def compute(self):
         """Compute all statistics and save to CSV."""
