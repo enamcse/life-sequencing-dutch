@@ -22,6 +22,9 @@ Usage:
     
     # Find the real last non-zero position for each sequence
     python h5_sequence_statistics.py --h5_file encoded.h5 --find_real_end
+    
+    # Check lifespan criteria (config-based) and generate config for extractor
+    python h5_sequence_statistics.py --h5_file encoded.h5 --lifespan_check --generate_config criteria.json
 
 The HDF5 file should have 'input_ids' with shape (N, 4, 1024):
     - input_ids[:, 0, :] = token IDs
@@ -36,13 +39,14 @@ Performance optimizations:
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from functools import partial
 
 import h5py
@@ -60,6 +64,52 @@ logger = logging.getLogger(__name__)
 DECADE_BINS = [-1, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 200]
 DECADE_LABELS = ["negative", "0-9", "10-19", "20-29", "30-39", "40-49", 
                  "50-59", "60-69", "70-79", "80-89", "90-99", "100+"]
+
+# Default lifespan criteria: childhood start + decade progression
+DEFAULT_LIFESPAN_CRITERIA = [
+    {"position": 6, "age_min": 0, "age_max": 9, "label": "childhood"},
+    {"position": 100, "age_min": 10, "age_max": 19, "label": "teens"},
+    {"position": 200, "age_min": 20, "age_max": 29, "label": "twenties"},
+    {"position": 300, "age_min": 30, "age_max": 39, "label": "thirties"},
+    {"position": 400, "age_min": 40, "age_max": 49, "label": "forties"},
+    {"position": 500, "age_min": 50, "age_max": 59, "label": "fifties"},
+    {"position": 600, "age_min": 60, "age_max": 69, "label": "sixties"},
+    {"position": 700, "age_min": 70, "age_max": 79, "label": "seventies"},
+    {"position": 800, "age_min": 80, "age_max": 89, "label": "eighties"},
+    {"position": 900, "age_min": 90, "age_max": 99, "label": "nineties"},
+    {"position": 1000, "age_min": 90, "age_max": 99, "label": "nineties_end"},
+]
+
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load criteria config from JSON or YAML file."""
+    with open(config_path, 'r') as f:
+        if config_path.endswith('.yaml') or config_path.endswith('.yml'):
+            try:
+                import yaml
+                return yaml.safe_load(f)
+            except ImportError:
+                raise ImportError("PyYAML required for YAML config files")
+        return json.load(f)
+
+
+def save_config(criteria: List[Dict], output_path: str, stats: Dict = None) -> None:
+    """Save criteria config to JSON file with optional statistics."""
+    config = {
+        "name": "lifespan_criteria",
+        "description": "Position-based age criteria for sequence extraction",
+        "position_age_criteria": criteria
+    }
+    if stats:
+        config["statistics"] = {
+            "total_sequences": stats.get('total', 0),
+            "matching_all_criteria": stats.get('lifespan_all', 0),
+            "match_percentage": f"{100 * stats.get('lifespan_all', 0) / stats.get('total', 1):.4f}%"
+        }
+    
+    with open(output_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    logger.info(f"Config saved to: {output_path}")
 
 
 def get_decade(age: int) -> str:
@@ -98,7 +148,8 @@ def get_decade_vectorized(ages: np.ndarray) -> np.ndarray:
 
 def process_chunk_vectorized(h5_path: str, start_idx: int, end_idx: int, 
                               end_pos: int = 1023, scan_positions: List[int] = None,
-                              find_real_end: bool = False) -> Dict:
+                              find_real_end: bool = False,
+                              lifespan_criteria: List[Dict] = None) -> Dict:
     """
     Process a chunk of sequences using vectorized numpy operations.
     
@@ -112,6 +163,7 @@ def process_chunk_vectorized(h5_path: str, start_idx: int, end_idx: int,
         end_pos: Position to use as "end" (default: 1023)
         scan_positions: List of positions to scan for decade stats (e.g., [1000, 1001, ..., 1023])
         find_real_end: If True, find the actual last non-zero position
+        lifespan_criteria: List of position-based age criteria to check
     
     Returns:
         Dictionary with statistics for this chunk
@@ -149,6 +201,31 @@ def process_chunk_vectorized(h5_path: str, start_idx: int, end_idx: int,
                 'token_end_zero': int((token_end == 0).sum()),
                 'token_end_nonzero': int((token_end != 0).sum()),
             }
+            
+            # Check lifespan criteria if provided
+            if lifespan_criteria:
+                lifespan_stats = {}
+                all_mask = np.ones(n_sequences, dtype=bool)
+                
+                for criterion in lifespan_criteria:
+                    pos = criterion['position']
+                    age_min = criterion['age_min']
+                    age_max = criterion['age_max']
+                    label = criterion.get('label', f'pos_{pos}')
+                    
+                    # Read age at this position
+                    age_at_pos = input_ids[start_idx:end_idx, 2, pos].astype(np.int32)
+                    
+                    # Check criterion
+                    matches = (age_at_pos >= age_min) & (age_at_pos <= age_max)
+                    lifespan_stats[f'lifespan_{label}'] = int(matches.sum())
+                    
+                    # Update cumulative mask
+                    all_mask &= matches
+                
+                # Count sequences matching ALL lifespan criteria
+                lifespan_stats['lifespan_all'] = int(all_mask.sum())
+                stats.update(lifespan_stats)
             
             # Age distributions using np.unique for efficiency
             age_0_unique, age_0_counts = np.unique(age_0, return_counts=True)
@@ -274,6 +351,7 @@ def merge_stats(stats_list: List[Dict], end_pos: int = 1023) -> Dict:
         'full_and_last3': 0,
         'position_stats': {},  # For scan_range
         'real_end_positions': Counter(),  # For find_real_end
+        'lifespan_stats': {},  # For lifespan criteria
     }
     
     for stats in stats_list:
@@ -314,6 +392,13 @@ def merge_stats(stats_list: List[Dict], end_pos: int = 1023) -> Dict:
         
         # Merge real_end_positions (from find_real_end)
         merged['real_end_positions'].update(stats.get('real_end_positions', Counter()))
+        
+        # Merge lifespan stats
+        for key, value in stats.items():
+            if key.startswith('lifespan_'):
+                if key not in merged['lifespan_stats']:
+                    merged['lifespan_stats'][key] = 0
+                merged['lifespan_stats'][key] += value
     
     return merged
 
@@ -468,6 +553,28 @@ def format_report(stats: Dict) -> str:
             lines.append(f"  Avg position: {avg_pos:.1f}")
         lines.append("")
     
+    # Lifespan criteria statistics (if available)
+    if stats.get('lifespan_stats'):
+        lines.append("=" * 80)
+        lines.append("LIFESPAN CRITERIA STATISTICS")
+        lines.append("=" * 80)
+        lines.append("")
+        lines.append("Individual criterion matches:")
+        lines.append("-" * 40)
+        
+        lifespan_stats = stats['lifespan_stats']
+        for key in sorted(lifespan_stats.keys()):
+            if key != 'lifespan_all':
+                label = key.replace('lifespan_', '')
+                count = lifespan_stats[key]
+                lines.append(f"  {label:20s}: {count:>12,} ({format_percentage(count, total)})")
+        
+        lines.append("")
+        if 'lifespan_all' in lifespan_stats:
+            count = lifespan_stats['lifespan_all']
+            lines.append(f">>> ALL CRITERIA MET: {count:>12,} ({format_percentage(count, total)}) <<<")
+        lines.append("")
+    
     lines.append("=" * 80)
     lines.append("END OF REPORT")
     lines.append("=" * 80)
@@ -478,7 +585,30 @@ def format_report(stats: Dict) -> str:
 def main():
     parser = argparse.ArgumentParser(
         description="Compute statistics for H5 sequence datasets",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Lifespan criteria mode:
+  Use --lifespan_check to check how many sequences match the default lifespan criteria:
+    - Position 6: age 0-9 (childhood)
+    - Position 100: age 10-19 (teens)
+    - Position 200: age 20-29 (twenties)
+    - ... through ...
+    - Position 900: age 90-99 (nineties)
+    - Position 1000: age 90-99 (nineties_end)
+  
+  Use --config to load custom criteria from a JSON file.
+  Use --generate_config to save the criteria for use with h5_sequence_extractor.py.
+
+Examples:
+  # Basic statistics
+  python h5_sequence_statistics.py --h5_file encoded.h5
+  
+  # Check lifespan criteria and generate config for extractor
+  python h5_sequence_statistics.py --h5_file encoded.h5 --lifespan_check --generate_config criteria.json
+  
+  # Use custom criteria config
+  python h5_sequence_statistics.py --h5_file encoded.h5 --config my_criteria.json
+        """
     )
     
     parser.add_argument("--h5_file", required=True,
@@ -497,6 +627,12 @@ def main():
                         help="Scan a range of positions, e.g., '1000-1023' or '900-1023'")
     parser.add_argument("--find_real_end", action="store_true",
                         help="Find the actual last non-zero position for each sequence")
+    parser.add_argument("--lifespan_check", action="store_true",
+                        help="Check default lifespan criteria (childhood at 6, decade progression)")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to JSON config file with custom position-based age criteria")
+    parser.add_argument("--generate_config", type=str, default=None,
+                        help="Generate config file for h5_sequence_extractor.py (use with --lifespan_check or --config)")
     
     args = parser.parse_args()
     
@@ -514,6 +650,17 @@ def main():
         except ValueError:
             logger.error(f"Invalid scan_range format: {args.scan_range}. Use 'start-end', e.g., '1000-1023'")
             sys.exit(1)
+    
+    # Load or set lifespan criteria
+    lifespan_criteria = None
+    if args.config:
+        logger.info(f"Loading criteria config from: {args.config}")
+        config = load_config(args.config)
+        lifespan_criteria = config.get('position_age_criteria', [])
+        logger.info(f"Loaded {len(lifespan_criteria)} position-based criteria")
+    elif args.lifespan_check:
+        lifespan_criteria = DEFAULT_LIFESPAN_CRITERIA
+        logger.info(f"Using default lifespan criteria ({len(lifespan_criteria)} checks)")
     
     # Get dataset size
     with h5py.File(args.h5_file, 'r') as f:
@@ -541,7 +688,8 @@ def main():
         process_chunk_vectorized,
         end_pos=args.end_pos,
         scan_positions=scan_positions,
-        find_real_end=args.find_real_end
+        find_real_end=args.find_real_end,
+        lifespan_criteria=lifespan_criteria
     )
     
     if args.sequential:
@@ -655,6 +803,31 @@ def main():
                 pct = 100 * count / total if total > 0 else 0
                 f.write(f"{pos},{count},{pct:.4f}\n")
         logger.info(f"Real end positions saved to: {real_end_csv}")
+    
+    # Save lifespan statistics if available
+    if merged_stats.get('lifespan_stats'):
+        lifespan_csv = output_path.replace('.txt', '_lifespan_stats.csv')
+        with open(lifespan_csv, 'w') as f:
+            f.write("criterion,count,percentage\n")
+            total = merged_stats['total']
+            for key in sorted(merged_stats['lifespan_stats'].keys()):
+                count = merged_stats['lifespan_stats'][key]
+                pct = 100 * count / total if total > 0 else 0
+                label = key.replace('lifespan_', '')
+                f.write(f"{label},{count},{pct:.4f}\n")
+        logger.info(f"Lifespan statistics saved to: {lifespan_csv}")
+    
+    # Generate config file for extractor if requested
+    if args.generate_config and lifespan_criteria:
+        # Include statistics in the config
+        stats_for_config = {
+            'total': merged_stats['total'],
+            'lifespan_all': merged_stats.get('lifespan_stats', {}).get('lifespan_all', 0)
+        }
+        save_config(lifespan_criteria, args.generate_config, stats=stats_for_config)
+        logger.info(f"Config file generated: {args.generate_config}")
+        logger.info("You can now use this config with h5_sequence_extractor.py:")
+        logger.info(f"  python h5_sequence_extractor.py --h5_file {args.h5_file} --config {args.generate_config} --output extracted.h5")
 
 
 if __name__ == "__main__":
