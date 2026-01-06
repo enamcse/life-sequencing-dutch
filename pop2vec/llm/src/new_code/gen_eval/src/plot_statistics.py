@@ -334,17 +334,34 @@ def plot_real_vs_simulated_scatter(
     Scatter plot of real vs simulated frequencies per million tokens across all decades and events.
     
     Useful for checking overall calibration: points should lie near the diagonal.
+    
+    - Color distinguishes events (death=red, retirement=blue, etc.)
+    - Marker shape distinguishes decades (0-9=circle, 10-19=square, etc.)
     """
     if not events_data:
         return
     
-    fig, ax = plt.subplots(figsize=(10, 10))
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Marker shapes for different decades
+    DECADE_MARKERS = {
+        "0-9": "o",      # circle
+        "10-19": "s",    # square
+        "20-29": "^",    # triangle up
+        "30-39": "v",    # triangle down
+        "40-49": "D",    # diamond
+        "50-59": "p",    # pentagon
+        "60-69": "h",    # hexagon
+        "70-79": "*",    # star
+        "80-89": "X",    # X
+        "90-99": "P",    # plus (filled)
+        "100+": "H",     # hexagon2
+    }
     
     all_real = []
     all_sim = []
-    colors = []
-    labels = []
     
+    # Plot each point with appropriate color and marker
     for event_name, (df, label, color) in events_data.items():
         if df.empty:
             continue
@@ -353,22 +370,30 @@ def plot_real_vs_simulated_scatter(
         
         for _, row in plot_df.iterrows():
             if pd.notna(row['real_freq_per_million']) and pd.notna(row['simulated_freq_per_million']):
+                decade = row['decade']
+                marker = DECADE_MARKERS.get(decade, 'o')
+                
+                ax.scatter(
+                    row['real_freq_per_million'], 
+                    row['simulated_freq_per_million'], 
+                    c=color, 
+                    marker=marker,
+                    s=120,  # Larger size for visibility
+                    alpha=0.8,
+                    edgecolors='black',
+                    linewidths=0.5
+                )
+                
                 all_real.append(row['real_freq_per_million'])
                 all_sim.append(row['simulated_freq_per_million'])
-                colors.append(color)
-                labels.append(f"{label} ({row['decade']})")
     
     if not all_real:
         logger.warning("No data for scatter plot")
         return
     
-    # Plot scatter
-    for i, (r, s, c, l) in enumerate(zip(all_real, all_sim, colors, labels)):
-        ax.scatter(r, s, c=c, s=50, alpha=0.7)
-    
     # Diagonal line (perfect calibration)
     max_val = max(max(all_real), max(all_sim)) * 1.1
-    ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, label='Perfect Calibration')
+    ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, linewidth=2)
     
     ax.set_xlabel('Real Frequency (per Million Tokens)', fontsize=12)
     ax.set_ylabel('Simulated Frequency (per Million Tokens)', fontsize=12)
@@ -378,13 +403,35 @@ def plot_real_vs_simulated_scatter(
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
     
-    # Legend for event types
+    # Create two legends: one for events (colors), one for decades (markers)
     from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor=color, markersize=10, label=label)
-        for label, color in set((l.split(' (')[0], c) for l, c in zip(labels, colors))
+    
+    # Legend for events (colors)
+    event_handles = [
+        Line2D([0], [0], marker='o', color='w', markerfacecolor=color, 
+               markersize=12, label=label, markeredgecolor='black', markeredgewidth=0.5)
+        for _, (_, label, color) in events_data.items()
     ]
-    ax.legend(handles=legend_elements, loc='upper left')
+    
+    # Legend for decades (markers) - only include decades that appear in data
+    decades_in_data = set()
+    for _, (df, _, _) in events_data.items():
+        if not df.empty:
+            decades_in_data.update(df['decade'].tolist())
+    
+    decade_handles = [
+        Line2D([0], [0], marker=DECADE_MARKERS.get(decade, 'o'), color='w', 
+               markerfacecolor='gray', markersize=10, label=decade,
+               markeredgecolor='black', markeredgewidth=0.5)
+        for decade in DECADE_ORDER if decade in decades_in_data
+    ]
+    
+    # Place legends
+    legend1 = ax.legend(handles=event_handles, loc='upper left', title='Events', 
+                        framealpha=0.9, fontsize=10)
+    ax.add_artist(legend1)
+    ax.legend(handles=decade_handles, loc='lower right', title='Decades', 
+              framealpha=0.9, fontsize=9, ncol=2)
     
     plt.tight_layout()
     
