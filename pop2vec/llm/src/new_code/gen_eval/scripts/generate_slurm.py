@@ -220,8 +220,7 @@ def generate_slurm_scripts(
     output_base_dir: Path,
     slurm_output_dir: Path,
     log_dir: str,
-    gpu_assignment: Dict[str, int] = None,
-    prev_job_ids: Dict[int, str] = None,
+    gpu_assignment: Dict[str, Dict[str, int]] = None,
 ):
     """Generate SLURM scripts for all models.
     
@@ -232,11 +231,10 @@ def generate_slurm_scripts(
         output_base_dir: Base directory for outputs
         slurm_output_dir: Directory for SLURM scripts
         log_dir: Directory for SLURM logs
-        gpu_assignment: Dict mapping model/experiment to GPU index
-        prev_job_ids: Dict mapping GPU index to previous job ID for dependencies
+        gpu_assignment: Dict[exp_name][model_name] = gpu_index
     
     Returns:
-        tuple: (scripts list, updated job_ids dict)
+        list: scripts info list
     """
     exp_name = exp_config['experiment_name']
     gen_settings = exp_config.get('generation', {})
@@ -245,9 +243,6 @@ def generate_slurm_scripts(
     slurm_output_dir.mkdir(parents=True, exist_ok=True)
     
     scripts = []
-    if prev_job_ids is None:
-        prev_job_ids = {}
-    updated_job_ids = prev_job_ids.copy()
     
     for model_name in models:
         # Load model config
@@ -260,17 +255,13 @@ def generate_slurm_scripts(
         # Generate run config
         config_path = generate_run_config(model_config, exp_config, run_output_dir)
         
-        # Get GPU assignment for this job
+        # Get GPU assignment for this model in this experiment
         gpu_index = -1
-        dependency_line = ""
-        if gpu_assignment:
-            # Use experiment-wise GPU assignment
-            gpu_index = gpu_assignment.get(exp_name, 0)
-            # Check for dependency on previous job on same GPU
-            if gpu_index in prev_job_ids:
-                dependency_line = f"#SBATCH --dependency=afterany:{prev_job_ids[gpu_index]}"
+        if gpu_assignment and exp_name in gpu_assignment:
+            gpu_index = gpu_assignment[exp_name].get(model_name, -1)
         
         # Generate SLURM script for generation (GPU)
+        # Note: dependency_line is empty here; dependencies are added at submit time
         gen_script_path = slurm_output_dir / f"gen_{model_name}_{exp_name}.sh"
         gen_script = SLURM_GENERATE_TEMPLATE.format(
             model_name=model_name,
@@ -282,7 +273,7 @@ def generate_slurm_scripts(
             time=gen_settings.get('time', '48:00:00'),
             log_dir=log_dir,
             config_path=config_path,
-            dependency_line=dependency_line,
+            dependency_line="",  # Dependencies added at submit time
             gpu_index=gpu_index,
         )
         
@@ -327,17 +318,23 @@ def generate_slurm_scripts(
     
     # Write manifest
     manifest_path = slurm_output_dir / f"manifest_{exp_name}.yaml"
+    
+    # Extract GPU assignment for this experiment only
+    exp_gpu_assignment = None
+    if gpu_assignment and exp_name in gpu_assignment:
+        exp_gpu_assignment = gpu_assignment[exp_name]
+    
     manifest = {
         'experiment': exp_name,
         'generated_at': datetime.now().isoformat(),
-        'gpu_assignment': gpu_assignment,
+        'gpu_assignment': exp_gpu_assignment,
         'scripts': scripts,
     }
     with open(manifest_path, 'w') as f:
         yaml.dump(manifest, f, default_flow_style=False)
     
     print(f"Manifest: {manifest_path}")
-    return scripts, updated_job_ids
+    return scripts
 
 
 def parse_gpu_list(gpu_str: str) -> List[int]:
@@ -352,25 +349,44 @@ def parse_gpu_list(gpu_str: str) -> List[int]:
     return gpus
 
 
-def create_gpu_assignment(experiments: List[Dict], available_gpus: List[int]) -> Dict[str, int]:
+def create_gpu_assignment(models: List[str], experiments: List[Dict], available_gpus: List[int]) -> Dict[str, Dict[str, int]]:
     """
-    Create experiment-wise GPU assignment.
+    Create model-wise GPU assignment for each experiment.
     
-    Maps each experiment to a GPU index from available_gpus.
-    If more experiments than GPUs, cycles through GPUs.
+    When submitting an experiment, different models run on different GPUs.
+    Jobs on the same GPU run sequentially (via SLURM dependencies).
+    
+    Example with 5 models and 4 GPUs:
+        model/experiment  e1  e2  e3  e4
+        m1                0   1   2   3
+        m2                1   2   3   0
+        m3                2   3   0   1
+        m4                3   0   1   2
+        m5                0   1   2   3  (cycles back)
+    
+    When you submit e1: m1->GPU0, m2->GPU1, m3->GPU2, m4->GPU3, m5->GPU0 (waits for m1)
     
     Args:
-        experiments: List of experiment definitions (with 'name' key)
+        models: List of model names
+        experiments: List of experiment definitions
         available_gpus: List of available GPU indices
     
     Returns:
-        Dict mapping experiment name to GPU index
+        Dict[exp_name][model_name] = gpu_index
     """
     assignment = {}
-    for i, exp_def in enumerate(experiments):
+    n_gpus = len(available_gpus)
+    
+    for exp_idx, exp_def in enumerate(experiments):
         exp_name = exp_def.get('name', f"exp_n{exp_def['n']}_c{exp_def['c']}_h{exp_def['h']}_g{exp_def['g']}")
-        gpu_index = available_gpus[i % len(available_gpus)]
-        assignment[exp_name] = gpu_index
+        assignment[exp_name] = {}
+        
+        for model_idx, model_name in enumerate(models):
+            # Rotate GPU assignment based on model index
+            # Each experiment shifts the starting GPU by exp_idx
+            gpu_idx = (model_idx + exp_idx) % n_gpus
+            assignment[exp_name][model_name] = available_gpus[gpu_idx]
+    
     return assignment
 
 
@@ -438,27 +454,44 @@ def generate_from_config(
     print(f"  Models: {len(models)}")
     print(f"  Experiments: {len(experiments)}")
     
-    # GPU assignment
+    # GPU assignment (model-wise within each experiment)
     gpu_assignment = None
     if available_gpus:
-        gpu_assignment = create_gpu_assignment(experiments, available_gpus)
-        print(f"  GPU Assignment (experiment-wise):")
-        for exp_name, gpu_idx in gpu_assignment.items():
-            print(f"    {exp_name} -> GPU {gpu_idx}")
+        gpu_assignment = create_gpu_assignment(models, experiments, available_gpus)
+        print(f"  GPU Assignment (model-wise per experiment):")
+        print(f"  Available GPUs: {available_gpus}")
+        # Print as a table
+        print(f"\n  {'Model':<25} " + " ".join(f"e{i:<3}" for i in range(len(experiments))))
+        for model_name in models:
+            row = f"  {model_name:<25} "
+            for exp_def in experiments:
+                exp_name = exp_def.get('name', f"exp_n{exp_def['n']}_c{exp_def['c']}_h{exp_def['h']}_g{exp_def['g']}")
+                gpu_idx = gpu_assignment[exp_name].get(model_name, -1)
+                row += f"{gpu_idx:<4} "
+            print(row)
+        print()
     else:
         # Check if config has gpu_indices
         gpu_str = config.get('gpu_indices')
         if gpu_str:
             available_gpus = parse_gpu_list(str(gpu_str))
-            gpu_assignment = create_gpu_assignment(experiments, available_gpus)
-            print(f"  GPU Assignment from config (experiment-wise):")
-            for exp_name, gpu_idx in gpu_assignment.items():
-                print(f"    {exp_name} -> GPU {gpu_idx}")
+            gpu_assignment = create_gpu_assignment(models, experiments, available_gpus)
+            print(f"  GPU Assignment from config (model-wise per experiment):")
+            print(f"  Available GPUs: {available_gpus}")
+            # Print as a table
+            print(f"\n  {'Model':<25} " + " ".join(f"e{i:<3}" for i in range(len(experiments))))
+            for model_name in models:
+                row = f"  {model_name:<25} "
+                for exp_def in experiments:
+                    exp_name = exp_def.get('name', f"exp_n{exp_def['n']}_c{exp_def['c']}_h{exp_def['h']}_g{exp_def['g']}")
+                    gpu_idx = gpu_assignment[exp_name].get(model_name, -1)
+                    row += f"{gpu_idx:<4} "
+                print(row)
+            print()
     
     print("=" * 60)
     
     all_scripts = []
-    prev_job_ids = {}
     
     for exp_def in experiments:
         exp_config = create_experiment_config(
@@ -486,7 +519,7 @@ def generate_from_config(
         print(f"  compute_by_age={exp_config['compute_by_age']}")
         print("-" * 40)
         
-        scripts, prev_job_ids = generate_slurm_scripts(
+        scripts = generate_slurm_scripts(
             models=models,
             exp_config=exp_config,
             models_base_dir=models_base_dir,
@@ -494,7 +527,6 @@ def generate_from_config(
             slurm_output_dir=slurm_output_dir,
             log_dir=log_dir,
             gpu_assignment=gpu_assignment,
-            prev_job_ids=prev_job_ids,
         )
         all_scripts.extend(scripts)
     
@@ -523,10 +555,19 @@ Examples:
     python generate_slurm.py --models model_v1 --n 10 --c 100 --h 20 --g 100
 
 GPU Assignment:
-    The --gpus flag assigns experiments to specific GPU indices.
-    - If 3 experiments and --gpus 0,1,2: each experiment gets one GPU
-    - If 5 experiments and --gpus 0,1: experiments cycle through GPUs
-    - Jobs on the same GPU will have SLURM dependencies to run sequentially
+    The --gpus flag assigns models to GPUs round-robin within each experiment.
+    
+    Example with 5 models (m1-m5), 4 experiments (e1-e4), and --gpus 0,1,2,3:
+    
+        model/exp  e1  e2  e3  e4
+        m1          0   1   2   3
+        m2          1   2   3   0
+        m3          2   3   0   1
+        m4          3   0   1   2
+        m5          0   1   2   3  (cycles back)
+    
+    When you submit e1: m1->GPU0, m2->GPU1, m3->GPU2, m4->GPU3, m5->GPU0
+    Jobs assigned to the same GPU run sequentially (via SLURM dependencies).
 
 Config file format (YAML):
     models:
@@ -560,7 +601,7 @@ Config file format (YAML):
     
     # GPU assignment
     parser.add_argument("--gpus", help="Available GPU indices (e.g., '0,1,2' or '0-3'). "
-                       "Assigns experiments to GPUs round-robin.")
+                       "Assigns models to GPUs round-robin within each experiment.")
     
     # Directory overrides
     parser.add_argument("--models-dir", help="Models configuration directory")
