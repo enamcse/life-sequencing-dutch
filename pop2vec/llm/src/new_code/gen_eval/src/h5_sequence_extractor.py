@@ -520,6 +520,182 @@ def extract_sequences(
     return n_sequences
 
 
+def extract_sequences_paired(
+    h5_path_primary: str,
+    h5_path_secondary: str,
+    output_path_primary: str,
+    output_path_secondary: str,
+    indices: np.ndarray,
+    n_sequences: int = 10000,
+    seed: int = 42,
+    verify_sequence_ids: bool = True
+) -> Tuple[int, int, List[Tuple[int, int, int]]]:
+    """
+    Extract sequences from paired H5 files (e.g., original and birthday-token version).
+    
+    Applies criteria filtering on primary file, then extracts matching indices from both files.
+    Verifies that sequence_ids match between the two files.
+    
+    Args:
+        h5_path_primary: Path to primary HDF5 file (criteria applied here)
+        h5_path_secondary: Path to secondary HDF5 file (birthday token version)
+        output_path_primary: Output path for primary extracted sequences
+        output_path_secondary: Output path for secondary extracted sequences
+        indices: Array of indices to sample from (matching criteria)
+        n_sequences: Number of sequences to extract
+        seed: Random seed for sampling
+        verify_sequence_ids: If True, verify sequence_ids match between files
+    
+    Returns:
+        Tuple of (n_extracted_primary, n_extracted_secondary, mismatches)
+        mismatches is a list of (index, primary_id, secondary_id) for any mismatched IDs
+    """
+    if len(indices) < n_sequences:
+        logger.warning(
+            f"Only {len(indices):,} matching sequences found, "
+            f"extracting all of them instead of {n_sequences:,}"
+        )
+        n_sequences = len(indices)
+    
+    # Random sample
+    np.random.seed(seed)
+    selected_indices = np.random.choice(indices, size=n_sequences, replace=False)
+    selected_indices = np.sort(selected_indices)  # Sort for efficient sequential read
+    
+    logger.info(f"Extracting {n_sequences:,} sequences from paired files")
+    logger.info(f"  Primary:   {h5_path_primary} -> {output_path_primary}")
+    logger.info(f"  Secondary: {h5_path_secondary} -> {output_path_secondary}")
+    
+    start_time = time.time()
+    mismatches = []
+    
+    # Open both source files
+    with h5py.File(h5_path_primary, 'r') as f_primary, \
+         h5py.File(h5_path_secondary, 'r') as f_secondary:
+        
+        # Check that both files have the same number of sequences
+        n_primary = f_primary['input_ids'].shape[0]
+        n_secondary = f_secondary['input_ids'].shape[0]
+        
+        if n_primary != n_secondary:
+            logger.error(f"File size mismatch! Primary: {n_primary:,}, Secondary: {n_secondary:,}")
+            raise ValueError(f"Paired files have different sizes: {n_primary} vs {n_secondary}")
+        
+        logger.info(f"Both files have {n_primary:,} sequences")
+        
+        # Verify sequence_ids match if requested
+        if verify_sequence_ids:
+            logger.info("Verifying sequence_ids match between files...")
+            
+            # Check if sequence_id dataset exists
+            if 'sequence_id' not in f_primary:
+                logger.warning("Primary file missing 'sequence_id' dataset, skipping verification")
+            elif 'sequence_id' not in f_secondary:
+                logger.warning("Secondary file missing 'sequence_id' dataset, skipping verification")
+            else:
+                # Read sequence_ids for selected indices
+                primary_ids = f_primary['sequence_id'][:]
+                secondary_ids = f_secondary['sequence_id'][:]
+                
+                # Check selected indices
+                for i, idx in enumerate(tqdm(selected_indices, desc="Verifying sequence_ids", unit="seq")):
+                    if primary_ids[idx] != secondary_ids[idx]:
+                        mismatches.append((idx, int(primary_ids[idx]), int(secondary_ids[idx])))
+                
+                if mismatches:
+                    logger.error(f"Found {len(mismatches)} sequence_id mismatches!")
+                    logger.error(f"First 5 mismatches: {mismatches[:5]}")
+                    # Save mismatches to file
+                    mismatch_path = output_path_primary.replace('.h5', '_mismatches.json')
+                    with open(mismatch_path, 'w') as f:
+                        json.dump({
+                            'total_mismatches': len(mismatches),
+                            'mismatches': [{'index': m[0], 'primary_id': m[1], 'secondary_id': m[2]} for m in mismatches[:1000]]
+                        }, f, indent=2)
+                    logger.error(f"Mismatch details saved to: {mismatch_path}")
+                    raise ValueError(f"Sequence ID mismatch between files: {len(mismatches)} mismatches")
+                else:
+                    logger.info("All sequence_ids match!")
+        
+        # Get shapes and dtypes
+        input_ids_primary = f_primary['input_ids']
+        input_ids_secondary = f_secondary['input_ids']
+        shape = input_ids_primary.shape
+        dtype = input_ids_primary.dtype
+        
+        logger.info(f"Source shape: {shape}, dtype: {dtype}")
+        
+        # Create output files
+        with h5py.File(output_path_primary, 'w') as f_out_primary, \
+             h5py.File(output_path_secondary, 'w') as f_out_secondary:
+            
+            # Create datasets in both output files
+            output_shape = (n_sequences, shape[1], shape[2])
+            
+            dst_primary = f_out_primary.create_dataset(
+                'input_ids', 
+                shape=output_shape, 
+                dtype=dtype,
+                chunks=(min(1000, n_sequences), shape[1], shape[2]),
+                compression='gzip',
+                compression_opts=4
+            )
+            
+            dst_secondary = f_out_secondary.create_dataset(
+                'input_ids', 
+                shape=output_shape, 
+                dtype=input_ids_secondary.dtype,
+                chunks=(min(1000, n_sequences), shape[1], shape[2]),
+                compression='gzip',
+                compression_opts=4
+            )
+            
+            # Store original indices in both files
+            f_out_primary.create_dataset('original_indices', data=selected_indices)
+            f_out_secondary.create_dataset('original_indices', data=selected_indices)
+            
+            # Copy sequence_ids if available
+            if 'sequence_id' in f_primary:
+                seq_ids = np.array([f_primary['sequence_id'][idx] for idx in selected_indices])
+                f_out_primary.create_dataset('sequence_id', data=seq_ids)
+                f_out_secondary.create_dataset('sequence_id', data=seq_ids)
+            
+            # Store metadata
+            for f_out, src_path, file_type in [
+                (f_out_primary, h5_path_primary, 'primary'),
+                (f_out_secondary, h5_path_secondary, 'secondary')
+            ]:
+                f_out.attrs['source_file'] = src_path
+                f_out.attrs['paired_source'] = h5_path_secondary if file_type == 'primary' else h5_path_primary
+                f_out.attrs['file_type'] = file_type
+                f_out.attrs['n_sequences'] = n_sequences
+                f_out.attrs['seed'] = seed
+                f_out.attrs['extraction_time'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Copy sequences in batches
+            batch_size = 5000
+            
+            with tqdm(total=n_sequences, desc="Extracting paired sequences", unit="seq") as pbar:
+                for i in range(0, n_sequences, batch_size):
+                    batch_end = min(i + batch_size, n_sequences)
+                    batch_indices = selected_indices[i:batch_end]
+                    
+                    # Read and write primary
+                    batch_primary = np.stack([input_ids_primary[idx] for idx in batch_indices])
+                    dst_primary[i:batch_end] = batch_primary
+                    
+                    # Read and write secondary
+                    batch_secondary = np.stack([input_ids_secondary[idx] for idx in batch_indices])
+                    dst_secondary[i:batch_end] = batch_secondary
+                    
+                    pbar.update(batch_end - i)
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Paired extraction complete in {elapsed:.1f}s ({n_sequences/elapsed:,.0f} seq/s)")
+    
+    return n_sequences, n_sequences, mismatches
+
+
 def write_summary(
     output_path: str,
     h5_path: str,
@@ -584,6 +760,93 @@ def write_summary(
     logger.info(f"Summary saved to: {summary_path}")
 
 
+def write_summary_paired(
+    output_path_primary: str,
+    output_path_secondary: str,
+    h5_path_primary: str,
+    h5_path_secondary: str,
+    criteria: Optional[Set[str]],
+    position_criteria: Optional[List[Dict]],
+    n_matching: int,
+    n_extracted: int,
+    indices: np.ndarray,
+    mismatches: List[Tuple[int, int, int]]
+) -> None:
+    """Write a summary file for paired extraction."""
+    summary_path = output_path_primary.replace('.h5', '_paired_summary.txt')
+    
+    with open(summary_path, 'w') as f:
+        f.write("=" * 70 + "\n")
+        f.write("H5 PAIRED SEQUENCE EXTRACTION SUMMARY\n")
+        f.write("=" * 70 + "\n\n")
+        
+        f.write("SOURCE FILES\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Primary file:     {h5_path_primary}\n")
+        f.write(f"Secondary file:   {h5_path_secondary}\n")
+        f.write("\n")
+        
+        f.write("OUTPUT FILES\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Primary output:   {output_path_primary}\n")
+        f.write(f"Secondary output: {output_path_secondary}\n")
+        f.write("\n")
+        
+        f.write("EXTRACTION DETAILS\n")
+        f.write("-" * 40 + "\n")
+        if position_criteria:
+            f.write(f"Mode:             Config-based position criteria\n")
+            f.write(f"Criteria count:   {len(position_criteria)}\n")
+        else:
+            f.write(f"Mode:             Legacy named criteria\n")
+            f.write(f"Criteria:         {', '.join(sorted(criteria)) if criteria else 'None'}\n")
+        
+        f.write(f"Matching found:   {n_matching:,}\n")
+        f.write(f"Sequences saved:  {n_extracted:,}\n")
+        f.write(f"Extraction time:  {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("\n")
+        
+        f.write("SEQUENCE ID VERIFICATION\n")
+        f.write("-" * 40 + "\n")
+        if len(mismatches) == 0:
+            f.write("Status:           PASSED - All sequence_ids match\n")
+        else:
+            f.write(f"Status:           FAILED - {len(mismatches)} mismatches found\n")
+            f.write("See *_mismatches.json for details\n")
+        f.write("\n")
+        
+        f.write("CRITERIA DEFINITIONS\n")
+        f.write("-" * 40 + "\n")
+        if position_criteria:
+            for c in position_criteria:
+                label = c.get('label', f"pos_{c['position']}")
+                f.write(f"  {label}: age at position {c['position']} in {c['age_min']}-{c['age_max']}\n")
+        else:
+            if criteria and 'childhood_start' in criteria:
+                f.write("  childhood_start: age at index 6 in 0-9\n")
+            if criteria and 'full_length' in criteria:
+                f.write("  full_length: token at index 1023 != 0 OR age at index 1023 != 0\n")
+            if criteria and 'end_of_life' in criteria:
+                f.write("  end_of_life: age at index 1023 in 70-99\n")
+            if criteria and 'decade_70' in criteria:
+                f.write("  decade_70: age at index 1023 in 70-79\n")
+            if criteria and 'decade_80' in criteria:
+                f.write("  decade_80: age at index 1023 in 80-89\n")
+            if criteria and 'decade_90' in criteria:
+                f.write("  decade_90: age at index 1023 in 90-99\n")
+        f.write("\n")
+        
+        # Index statistics
+        if len(indices) > 0:
+            f.write("INDEX STATISTICS (of matching sequences)\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"  Min index:      {min(indices):,}\n")
+            f.write(f"  Max index:      {max(indices):,}\n")
+            f.write(f"  Index range:    {max(indices) - min(indices):,}\n")
+    
+    logger.info(f"Paired summary saved to: {summary_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract sequences matching criteria from H5 datasets",
@@ -611,24 +874,45 @@ Config-based mode (recommended for complex criteria):
     ]
   }
 
+Paired extraction mode:
+  Use --h5_file_secondary and --output_secondary to extract from two paired H5 files.
+  Criteria are applied on the primary file, then the same indices are extracted from both.
+  Verifies sequence_ids match between files (stored in 'sequence_id' dataset).
+
 Examples:
-  # Legacy mode
+  # Legacy mode (single file)
   python h5_sequence_extractor.py --h5_file encoded.h5 --output extracted.h5 \\
       --n_sequences 10000 --criteria childhood_start,full_length,end_of_life
   
   # Generate default lifespan config
   python h5_sequence_extractor.py --generate_config lifespan_criteria.json
   
-  # Config-based mode
+  # Config-based mode (single file)
   python h5_sequence_extractor.py --h5_file encoded.h5 --output extracted.h5 \\
+      --n_sequences 10000 --config lifespan_criteria.json
+  
+  # Paired extraction (original + birthday token version)
+  python h5_sequence_extractor.py --h5_file original.h5 --output original_extracted.h5 \\
+      --h5_file_secondary birthday.h5 --output_secondary birthday_extracted.h5 \\
       --n_sequences 10000 --config lifespan_criteria.json
         """
     )
     
+    # Primary file arguments
     parser.add_argument("--h5_file", 
-                        help="Path to source HDF5 file")
+                        help="Path to primary source HDF5 file (criteria applied here)")
     parser.add_argument("--output",
-                        help="Path to output HDF5 file")
+                        help="Path to primary output HDF5 file")
+    
+    # Secondary file arguments (for paired extraction)
+    parser.add_argument("--h5_file_secondary",
+                        help="Path to secondary HDF5 file (e.g., birthday token version)")
+    parser.add_argument("--output_secondary",
+                        help="Path to secondary output HDF5 file")
+    parser.add_argument("--skip_id_verification", action="store_true",
+                        help="Skip sequence_id verification between paired files")
+    
+    # Extraction parameters
     parser.add_argument("--n_sequences", type=int, default=10000,
                         help="Number of sequences to extract (default: 10000)")
     parser.add_argument("--criteria", type=str, 
@@ -638,18 +922,22 @@ Examples:
                         help="Path to JSON/YAML config file with position-based age criteria")
     parser.add_argument("--generate_config", type=str, default=None,
                         help="Generate default lifespan config and save to this path, then exit")
+    
+    # Performance parameters
     parser.add_argument("--n_workers", type=int, default=8,
                         help="Number of parallel workers (default: 8)")
     parser.add_argument("--chunk_size", type=int, default=100000,
                         help="Chunk size for parallel processing (default: 100000)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for sampling (default: 42)")
+    parser.add_argument("--sequential", action="store_true",
+                        help="Use sequential processing (slower but memory-safe)")
+    
+    # Output options
     parser.add_argument("--find_only", action="store_true",
                         help="Only find matching indices, don't extract")
     parser.add_argument("--save_indices", type=str, default=None,
                         help="Save matching indices to a numpy file")
-    parser.add_argument("--sequential", action="store_true",
-                        help="Use sequential processing (slower but memory-safe)")
     
     args = parser.parse_args()
     
@@ -673,6 +961,21 @@ Examples:
     if not os.path.exists(args.h5_file):
         logger.error(f"H5 file not found: {args.h5_file}")
         sys.exit(1)
+    
+    # Check for paired extraction mode
+    paired_mode = args.h5_file_secondary is not None
+    if paired_mode:
+        if not args.output_secondary:
+            logger.error("--output_secondary is required when using --h5_file_secondary")
+            sys.exit(1)
+        if not os.path.exists(args.h5_file_secondary):
+            logger.error(f"Secondary H5 file not found: {args.h5_file_secondary}")
+            sys.exit(1)
+        logger.info("=" * 60)
+        logger.info("PAIRED EXTRACTION MODE")
+        logger.info("=" * 60)
+        logger.info(f"Primary file:   {args.h5_file}")
+        logger.info(f"Secondary file: {args.h5_file_secondary}")
     
     # Determine mode: config-based or legacy
     position_criteria = None
@@ -706,14 +1009,17 @@ Examples:
             logger.error(f"Valid options: {valid_criteria}")
             sys.exit(1)
     
-    logger.info(f"Source file: {args.h5_file}")
+    logger.info(f"Primary source: {args.h5_file}")
     if args.output:
-        logger.info(f"Output file: {args.output}")
+        logger.info(f"Primary output: {args.output}")
+    if paired_mode:
+        logger.info(f"Secondary source: {args.h5_file_secondary}")
+        logger.info(f"Secondary output: {args.output_secondary}")
     if criteria:
         logger.info(f"Criteria: {criteria}")
     logger.info(f"Target sequences: {args.n_sequences:,}")
     
-    # Find matching indices
+    # Find matching indices (always from primary file)
     # Request a bit more than needed in case of duplicates or issues
     max_indices = args.n_sequences * 2 if not args.find_only else None
     
@@ -744,34 +1050,74 @@ Examples:
         sys.exit(1)
     
     # Extract sequences
-    n_extracted = extract_sequences(
-        h5_path=args.h5_file,
-        output_path=args.output,
-        indices=matching_indices,
-        n_sequences=args.n_sequences,
-        seed=args.seed
-    )
-    
-    # Write summary
-    write_summary(
-        output_path=args.output,
-        h5_path=args.h5_file,
-        criteria=criteria,
-        position_criteria=position_criteria,
-        n_matching=n_matching,
-        n_extracted=n_extracted,
-        indices=matching_indices
-    )
-    
-    # Also save the config used (for reproducibility)
-    if position_criteria:
-        config_copy_path = args.output.replace('.h5', '_criteria.json')
-        with open(config_copy_path, 'w') as f:
-            json.dump({"position_age_criteria": position_criteria}, f, indent=2)
-        logger.info(f"Criteria config saved to: {config_copy_path}")
-    
-    logger.info("Done!")
-    logger.info(f"Extracted {n_extracted:,} sequences to {args.output}")
+    if paired_mode:
+        # Paired extraction
+        n_extracted_primary, n_extracted_secondary, mismatches = extract_sequences_paired(
+            h5_path_primary=args.h5_file,
+            h5_path_secondary=args.h5_file_secondary,
+            output_path_primary=args.output,
+            output_path_secondary=args.output_secondary,
+            indices=matching_indices,
+            n_sequences=args.n_sequences,
+            seed=args.seed,
+            verify_sequence_ids=not args.skip_id_verification
+        )
+        
+        # Write paired summary
+        write_summary_paired(
+            output_path_primary=args.output,
+            output_path_secondary=args.output_secondary,
+            h5_path_primary=args.h5_file,
+            h5_path_secondary=args.h5_file_secondary,
+            criteria=criteria,
+            position_criteria=position_criteria,
+            n_matching=n_matching,
+            n_extracted=n_extracted_primary,
+            indices=matching_indices,
+            mismatches=mismatches
+        )
+        
+        # Also save the config used (for reproducibility)
+        if position_criteria:
+            config_copy_path = args.output.replace('.h5', '_criteria.json')
+            with open(config_copy_path, 'w') as f:
+                json.dump({"position_age_criteria": position_criteria}, f, indent=2)
+            logger.info(f"Criteria config saved to: {config_copy_path}")
+        
+        logger.info("Done!")
+        logger.info(f"Extracted {n_extracted_primary:,} sequences to paired files:")
+        logger.info(f"  Primary:   {args.output}")
+        logger.info(f"  Secondary: {args.output_secondary}")
+    else:
+        # Single file extraction
+        n_extracted = extract_sequences(
+            h5_path=args.h5_file,
+            output_path=args.output,
+            indices=matching_indices,
+            n_sequences=args.n_sequences,
+            seed=args.seed
+        )
+        
+        # Write summary
+        write_summary(
+            output_path=args.output,
+            h5_path=args.h5_file,
+            criteria=criteria,
+            position_criteria=position_criteria,
+            n_matching=n_matching,
+            n_extracted=n_extracted,
+            indices=matching_indices
+        )
+        
+        # Also save the config used (for reproducibility)
+        if position_criteria:
+            config_copy_path = args.output.replace('.h5', '_criteria.json')
+            with open(config_copy_path, 'w') as f:
+                json.dump({"position_age_criteria": position_criteria}, f, indent=2)
+            logger.info(f"Criteria config saved to: {config_copy_path}")
+        
+        logger.info("Done!")
+        logger.info(f"Extracted {n_extracted:,} sequences to {args.output}")
 
 
 if __name__ == "__main__":
