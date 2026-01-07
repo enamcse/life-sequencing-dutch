@@ -55,10 +55,15 @@ vim pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml
 python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
     --config pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml
 
-# 4b. (Optional) With GPU assignment for experiment-wise distribution
+# 4b. (Optional) With GPU assignment (models distributed across GPUs per experiment)
 python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
     --config pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml \
     --gpus 0,1,2,3
+
+# 4c. (Optional) Multi-node GPU assignment
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
+    --config pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml \
+    --gpus "ossc9424vm1:0,1;ossc9424vm2:0,1"
 
 # 5. Submit jobs
 bash pop2vec/llm/src/new_code/gen_eval/scripts/submit_jobs.sh \
@@ -331,43 +336,67 @@ For each token in the vocabulary:
 
 ## GPU Assignment
 
-Jobs can be assigned to specific GPU indices to optimize resource utilization and prevent memory conflicts.
+Jobs can be assigned to specific GPU slots (node + GPU index) to optimize resource utilization and prevent memory conflicts.
 
-### Experiment-wise GPU Assignment
+### Model-wise GPU Assignment
 
-When using the `--gpus` flag, experiments are distributed across available GPUs:
+When using the `--gpus` flag, **models within each experiment** are distributed across available GPUs:
 
 ```bash
-# Assign experiments to GPUs 0, 1, 2, 3
+# Simple format: GPUs on default node (ossc9424vm1)
 python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
     --config experiments_config.yaml --gpus 0,1,2,3
 
 # Range syntax also works
 python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
     --config experiments_config.yaml --gpus 0-3
+
+# Multi-node format: specify GPUs per node
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
+    --config experiments_config.yaml \
+    --gpus "ossc9424vm1:0,1;ossc9424vm2:2,3"
 ```
 
 **How it works:**
-- Each experiment gets assigned to a GPU index (round-robin if more experiments than GPUs)
-- All models for that experiment use the same GPU
-- Jobs on the same GPU run sequentially (via SLURM dependencies)
+- When you submit ONE experiment, different models run on different GPUs
+- Models are assigned round-robin across available GPU slots
+- Jobs on the same GPU slot run sequentially (via SLURM dependencies)
+- Each GPU slot is defined by (node, gpu_index) pair
 
-**Example with 4 experiments and 4 GPUs:**
-```
-Experiment          GPU Index
-exp_n10_c100        0
-exp_n100_c100       1
-exp_n1000_c100      2
-exp_n100_c1000      3
+**Example with 5 models, 4 experiments, and 4 GPUs on ossc9424vm1:**
+
+| model/exp | e1 | e2 | e3 | e4 |
+|-----------|----|----|----|----|
+| m1 | vm1:GPU0 | vm1:GPU1 | vm1:GPU2 | vm1:GPU3 |
+| m2 | vm1:GPU1 | vm1:GPU2 | vm1:GPU3 | vm1:GPU0 |
+| m3 | vm1:GPU2 | vm1:GPU3 | vm1:GPU0 | vm1:GPU1 |
+| m4 | vm1:GPU3 | vm1:GPU0 | vm1:GPU1 | vm1:GPU2 |
+| m5 | vm1:GPU0 | vm1:GPU1 | vm1:GPU2 | vm1:GPU3 |
+
+**When you submit e1:**
+- m1 → ossc9424vm1:GPU0
+- m2 → ossc9424vm1:GPU1
+- m3 → ossc9424vm1:GPU2
+- m4 → ossc9424vm1:GPU3
+- m5 → ossc9424vm1:GPU0 (waits for m1 to complete)
+
+### Generated SLURM Directives
+
+The generated scripts include proper SLURM directives for node and GPU assignment:
+
+```bash
+#SBATCH --nodelist=ossc9424vm1    # Target specific node
+...
+export CUDA_VISIBLE_DEVICES=0      # Use specific GPU on that node
 ```
 
 ### Sequential GPU Execution
 
 When submitting jobs, the `submit_jobs.sh` script automatically:
 
-1. Reads GPU index from generated scripts
-2. Tracks the last job ID for each GPU
-3. Adds SLURM dependencies so jobs on the same GPU run sequentially
+1. Reads GPU slot (node:gpu_index) from generated scripts
+2. Tracks the last job ID for each GPU slot
+3. Adds SLURM dependencies so jobs on the same GPU slot run sequentially
 4. Statistics jobs depend on their corresponding generation jobs
 
 This prevents GPU memory conflicts when running large models.
@@ -381,7 +410,11 @@ models:
   - Gen-medium
   - Gen-BASE
   
-gpu_indices: "0,1,2,3"  # Specify GPUs in config
+# Simple format (default node: ossc9424vm1)
+gpu_indices: "0,1,2,3"
+
+# Or multi-node format
+gpu_indices: "ossc9424vm1:0,1;ossc9424vm2:2,3"
 
 experiments:
   - name: exp_n10_c100_h20_g100

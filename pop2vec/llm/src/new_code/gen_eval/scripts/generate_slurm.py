@@ -37,6 +37,7 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
+from dataclasses import dataclass
 
 
 # Template for SLURM generation script (GPU)
@@ -51,17 +52,22 @@ SLURM_GENERATE_TEMPLATE = '''#!/bin/bash
 #SBATCH --gpus-per-node={gpus}
 #SBATCH -e {log_dir}/%x-%j.err
 #SBATCH -o {log_dir}/%x-%j.out
+{nodelist_line}
 {dependency_line}
 
 echo "=========================================="
 echo "Generation Job: {model_name}"
 echo "Experiment: {exp_name}"
 echo "GPU Index: {gpu_index}"
+echo "Node: {node_name}"
 echo "=========================================="
 echo "Started: $(date)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $(hostname)"
 echo ""
+
+# Set GPU device
+{cuda_device_line}
 
 # GPU info
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader
@@ -220,7 +226,7 @@ def generate_slurm_scripts(
     output_base_dir: Path,
     slurm_output_dir: Path,
     log_dir: str,
-    gpu_assignment: Dict[str, Dict[str, int]] = None,
+    gpu_assignment: Dict[str, Dict[str, 'GpuSlot']] = None,
 ):
     """Generate SLURM scripts for all models.
     
@@ -231,7 +237,7 @@ def generate_slurm_scripts(
         output_base_dir: Base directory for outputs
         slurm_output_dir: Directory for SLURM scripts
         log_dir: Directory for SLURM logs
-        gpu_assignment: Dict[exp_name][model_name] = gpu_index
+        gpu_assignment: Dict[exp_name][model_name] = GpuSlot(node, gpu_index)
     
     Returns:
         list: scripts info list
@@ -256,9 +262,19 @@ def generate_slurm_scripts(
         config_path = generate_run_config(model_config, exp_config, run_output_dir)
         
         # Get GPU assignment for this model in this experiment
+        gpu_slot = None
         gpu_index = -1
+        node_name = ""
+        nodelist_line = ""
+        cuda_device_line = "# No GPU assignment"
+        
         if gpu_assignment and exp_name in gpu_assignment:
-            gpu_index = gpu_assignment[exp_name].get(model_name, -1)
+            gpu_slot = gpu_assignment[exp_name].get(model_name)
+            if gpu_slot:
+                gpu_index = gpu_slot.gpu_index
+                node_name = gpu_slot.node
+                nodelist_line = f"#SBATCH --nodelist={node_name}"
+                cuda_device_line = f"export CUDA_VISIBLE_DEVICES={gpu_index}"
         
         # Generate SLURM script for generation (GPU)
         # Note: dependency_line is empty here; dependencies are added at submit time
@@ -275,6 +291,9 @@ def generate_slurm_scripts(
             config_path=config_path,
             dependency_line="",  # Dependencies added at submit time
             gpu_index=gpu_index,
+            node_name=node_name,
+            nodelist_line=nodelist_line,
+            cuda_device_line=cuda_device_line,
         )
         
         with open(gen_script_path, 'w') as f:
@@ -306,23 +325,27 @@ def generate_slurm_scripts(
             'config': str(config_path),
             'output_dir': str(run_output_dir),
             'gpu_index': gpu_index,
+            'node': node_name,
         })
         
         print(f"  ✓ {model_name}")
         print(f"      Config: {config_path}")
         print(f"      Gen script: {gen_script_path}")
         print(f"      Stats script: {stats_script_path}")
-        if gpu_index >= 0:
-            print(f"      GPU index: {gpu_index}")
+        if gpu_slot:
+            print(f"      GPU: {node_name}:GPU{gpu_index}")
         print()
     
     # Write manifest
     manifest_path = slurm_output_dir / f"manifest_{exp_name}.yaml"
     
-    # Extract GPU assignment for this experiment only
+    # Extract GPU assignment for this experiment only (convert GpuSlot to dict for YAML)
     exp_gpu_assignment = None
     if gpu_assignment and exp_name in gpu_assignment:
-        exp_gpu_assignment = gpu_assignment[exp_name]
+        exp_gpu_assignment = {
+            model: {'node': slot.node, 'gpu_index': slot.gpu_index}
+            for model, slot in gpu_assignment[exp_name].items()
+        }
     
     manifest = {
         'experiment': exp_name,
@@ -349,43 +372,111 @@ def parse_gpu_list(gpu_str: str) -> List[int]:
     return gpus
 
 
-def create_gpu_assignment(models: List[str], experiments: List[Dict], available_gpus: List[int]) -> Dict[str, Dict[str, int]]:
+def parse_gpu_spec(gpu_spec: str, default_node: str = "ossc9424vm1") -> Dict[str, List[int]]:
+    """
+    Parse GPU specification string to node -> GPU list mapping.
+    
+    Formats supported:
+        "0,1,2"                           -> {"ossc9424vm1": [0, 1, 2]}
+        "0-3"                             -> {"ossc9424vm1": [0, 1, 2, 3]}
+        "ossc9424vm1:0,1,2"               -> {"ossc9424vm1": [0, 1, 2]}
+        "ossc9424vm1:0,1;ossc9424vm2:2,3" -> {"ossc9424vm1": [0, 1], "ossc9424vm2": [2, 3]}
+    
+    Args:
+        gpu_spec: GPU specification string
+        default_node: Default node name when not specified
+    
+    Returns:
+        Dict mapping node name to list of GPU indices
+    """
+    result = {}
+    
+    # Check if it contains node specification (has ':')
+    if ':' in gpu_spec:
+        # Per-node specification
+        for node_spec in gpu_spec.split(';'):
+            node_spec = node_spec.strip()
+            if ':' in node_spec:
+                node_name, gpu_list = node_spec.split(':', 1)
+                result[node_name.strip()] = parse_gpu_list(gpu_list.strip())
+    else:
+        # Simple GPU list - use default node
+        result[default_node] = parse_gpu_list(gpu_spec)
+    
+    return result
+
+
+def flatten_gpu_spec(gpu_spec: Dict[str, List[int]]) -> List[tuple]:
+    """
+    Flatten GPU spec to list of (node, gpu_index) tuples.
+    
+    Example:
+        {"ossc9424vm1": [0, 1], "ossc9424vm2": [2, 3]}
+        -> [("ossc9424vm1", 0), ("ossc9424vm1", 1), ("ossc9424vm2", 2), ("ossc9424vm2", 3)]
+    """
+    result = []
+    for node, gpus in gpu_spec.items():
+        for gpu_idx in gpus:
+            result.append((node, gpu_idx))
+    return result
+
+
+@dataclass
+class GpuSlot:
+    """Represents a GPU slot (node + GPU index)."""
+    node: str
+    gpu_index: int
+    
+    def __str__(self):
+        return f"{self.node}:GPU{self.gpu_index}"
+
+
+def create_gpu_assignment(
+    models: List[str], 
+    experiments: List[Dict], 
+    gpu_spec: Dict[str, List[int]]
+) -> Dict[str, Dict[str, GpuSlot]]:
     """
     Create model-wise GPU assignment for each experiment.
     
     When submitting an experiment, different models run on different GPUs.
     Jobs on the same GPU run sequentially (via SLURM dependencies).
     
-    Example with 5 models and 4 GPUs:
-        model/experiment  e1  e2  e3  e4
-        m1                0   1   2   3
-        m2                1   2   3   0
-        m3                2   3   0   1
-        m4                3   0   1   2
-        m5                0   1   2   3  (cycles back)
+    Example with 5 models, 4 GPU slots across 2 nodes:
+        GPU slots: [vm1:0, vm1:1, vm2:0, vm2:1]
+        
+        model/experiment  e1        e2        e3        e4
+        m1                vm1:0     vm1:1     vm2:0     vm2:1
+        m2                vm1:1     vm2:0     vm2:1     vm1:0
+        m3                vm2:0     vm2:1     vm1:0     vm1:1
+        m4                vm2:1     vm1:0     vm1:1     vm2:0
+        m5                vm1:0     vm1:1     vm2:0     vm2:1  (cycles back)
     
-    When you submit e1: m1->GPU0, m2->GPU1, m3->GPU2, m4->GPU3, m5->GPU0 (waits for m1)
+    When you submit e1: m1->vm1:GPU0, m2->vm1:GPU1, m3->vm2:GPU0, m4->vm2:GPU1, m5->vm1:GPU0 (waits)
     
     Args:
         models: List of model names
         experiments: List of experiment definitions
-        available_gpus: List of available GPU indices
+        gpu_spec: Dict mapping node name to list of GPU indices
     
     Returns:
-        Dict[exp_name][model_name] = gpu_index
+        Dict[exp_name][model_name] = GpuSlot
     """
+    # Flatten GPU spec to list of slots
+    gpu_slots = [GpuSlot(node, gpu) for node, gpu in flatten_gpu_spec(gpu_spec)]
+    n_slots = len(gpu_slots)
+    
     assignment = {}
-    n_gpus = len(available_gpus)
     
     for exp_idx, exp_def in enumerate(experiments):
         exp_name = exp_def.get('name', f"exp_n{exp_def['n']}_c{exp_def['c']}_h{exp_def['h']}_g{exp_def['g']}")
         assignment[exp_name] = {}
         
         for model_idx, model_name in enumerate(models):
-            # Rotate GPU assignment based on model index
-            # Each experiment shifts the starting GPU by exp_idx
-            gpu_idx = (model_idx + exp_idx) % n_gpus
-            assignment[exp_name][model_name] = available_gpus[gpu_idx]
+            # Rotate GPU slot assignment based on model index
+            # Each experiment shifts the starting slot by exp_idx
+            slot_idx = (model_idx + exp_idx) % n_slots
+            assignment[exp_name][model_name] = gpu_slots[slot_idx]
     
     return assignment
 
@@ -396,7 +487,7 @@ def generate_from_config(
     output_base_dir: Path = None,
     slurm_output_dir: Path = None,
     log_dir: str = None,
-    available_gpus: List[int] = None,
+    gpu_spec: Dict[str, List[int]] = None,
 ):
     """Generate SLURM scripts from a comprehensive config file.
     
@@ -406,7 +497,7 @@ def generate_from_config(
         output_base_dir: Override for output directory
         slurm_output_dir: Override for SLURM scripts directory
         log_dir: Override for log directory
-        available_gpus: List of available GPU indices for experiment assignment
+        gpu_spec: Dict mapping node name to list of GPU indices
     """
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -456,36 +547,47 @@ def generate_from_config(
     
     # GPU assignment (model-wise within each experiment)
     gpu_assignment = None
-    if available_gpus:
-        gpu_assignment = create_gpu_assignment(models, experiments, available_gpus)
+    if gpu_spec:
+        gpu_assignment = create_gpu_assignment(models, experiments, gpu_spec)
         print(f"  GPU Assignment (model-wise per experiment):")
-        print(f"  Available GPUs: {available_gpus}")
+        # Print GPU slots
+        gpu_slots = flatten_gpu_spec(gpu_spec)
+        print(f"  Available GPU slots: {[f'{n}:GPU{g}' for n, g in gpu_slots]}")
         # Print as a table
-        print(f"\n  {'Model':<25} " + " ".join(f"e{i:<3}" for i in range(len(experiments))))
+        print(f"\n  {'Model':<25} " + " ".join(f"e{i:<12}" for i in range(len(experiments))))
         for model_name in models:
             row = f"  {model_name:<25} "
             for exp_def in experiments:
                 exp_name = exp_def.get('name', f"exp_n{exp_def['n']}_c{exp_def['c']}_h{exp_def['h']}_g{exp_def['g']}")
-                gpu_idx = gpu_assignment[exp_name].get(model_name, -1)
-                row += f"{gpu_idx:<4} "
+                slot = gpu_assignment[exp_name].get(model_name)
+                if slot:
+                    cell = f"{slot.node[-3:]}:GPU{slot.gpu_index}"
+                else:
+                    cell = "-"
+                row += f"{cell:<13} "
             print(row)
         print()
     else:
         # Check if config has gpu_indices
         gpu_str = config.get('gpu_indices')
         if gpu_str:
-            available_gpus = parse_gpu_list(str(gpu_str))
-            gpu_assignment = create_gpu_assignment(models, experiments, available_gpus)
+            gpu_spec = parse_gpu_spec(str(gpu_str))
+            gpu_assignment = create_gpu_assignment(models, experiments, gpu_spec)
             print(f"  GPU Assignment from config (model-wise per experiment):")
-            print(f"  Available GPUs: {available_gpus}")
+            gpu_slots = flatten_gpu_spec(gpu_spec)
+            print(f"  Available GPU slots: {[f'{n}:GPU{g}' for n, g in gpu_slots]}")
             # Print as a table
-            print(f"\n  {'Model':<25} " + " ".join(f"e{i:<3}" for i in range(len(experiments))))
+            print(f"\n  {'Model':<25} " + " ".join(f"e{i:<12}" for i in range(len(experiments))))
             for model_name in models:
                 row = f"  {model_name:<25} "
                 for exp_def in experiments:
                     exp_name = exp_def.get('name', f"exp_n{exp_def['n']}_c{exp_def['c']}_h{exp_def['h']}_g{exp_def['g']}")
-                    gpu_idx = gpu_assignment[exp_name].get(model_name, -1)
-                    row += f"{gpu_idx:<4} "
+                    slot = gpu_assignment[exp_name].get(model_name)
+                    if slot:
+                        cell = f"{slot.node[-3:]}:GPU{slot.gpu_index}"
+                    else:
+                        cell = "-"
+                    row += f"{cell:<13} "
                 print(row)
             print()
     
@@ -545,8 +647,12 @@ Examples:
     # With config file (multiple experiments and models)
     python generate_slurm.py --config experiments_config.yaml
 
-    # With GPU assignment (experiments distributed across GPUs 0,1,2)
-    python generate_slurm.py --config experiments_config.yaml --gpus 0,1,2
+    # With GPU assignment on single node (default: ossc9424vm1)
+    python generate_slurm.py --config experiments_config.yaml --gpus 0,1,2,3
+
+    # With GPU assignment across multiple nodes
+    python generate_slurm.py --config experiments_config.yaml \\
+        --gpus "ossc9424vm1:0,1;ossc9424vm2:0,1"
 
     # With experiment name
     python generate_slurm.py --models model_v1 model_v2 --experiment exp_n10_c100
@@ -555,25 +661,40 @@ Examples:
     python generate_slurm.py --models model_v1 --n 10 --c 100 --h 20 --g 100
 
 GPU Assignment:
-    The --gpus flag assigns models to GPUs round-robin within each experiment.
+    The --gpus flag assigns models to GPU slots round-robin within each experiment.
+    Each GPU slot is a (node, gpu_index) pair.
     
-    Example with 5 models (m1-m5), 4 experiments (e1-e4), and --gpus 0,1,2,3:
+    Formats:
+      Simple:    '0,1,2' or '0-3'  (default node: ossc9424vm1)
+      Per-node:  'ossc9424vm1:0,1,2'
+      Multi-node: 'ossc9424vm1:0,1;ossc9424vm2:0,1'
     
-        model/exp  e1  e2  e3  e4
-        m1          0   1   2   3
-        m2          1   2   3   0
-        m3          2   3   0   1
-        m4          3   0   1   2
-        m5          0   1   2   3  (cycles back)
+    Example with 5 models (m1-m5), 4 GPU slots, and --gpus 0,1,2,3:
     
-    When you submit e1: m1->GPU0, m2->GPU1, m3->GPU2, m4->GPU3, m5->GPU0
-    Jobs assigned to the same GPU run sequentially (via SLURM dependencies).
+        model/exp  e1           e2           e3           e4
+        m1         vm1:GPU0     vm1:GPU1     vm1:GPU2     vm1:GPU3
+        m2         vm1:GPU1     vm1:GPU2     vm1:GPU3     vm1:GPU0
+        m3         vm1:GPU2     vm1:GPU3     vm1:GPU0     vm1:GPU1
+        m4         vm1:GPU3     vm1:GPU0     vm1:GPU1     vm1:GPU2
+        m5         vm1:GPU0     vm1:GPU1     vm1:GPU2     vm1:GPU3  (cycles back)
+    
+    When you submit e1:
+      m1 -> ossc9424vm1:GPU0
+      m2 -> ossc9424vm1:GPU1
+      m3 -> ossc9424vm1:GPU2
+      m4 -> ossc9424vm1:GPU3
+      m5 -> ossc9424vm1:GPU0 (waits for m1 via SLURM dependency)
+
+    Generated scripts include:
+      - #SBATCH --nodelist=ossc9424vm1  (to specify the node)
+      - export CUDA_VISIBLE_DEVICES=0   (to specify the GPU)
 
 Config file format (YAML):
     models:
       - model_v1
       - model_v2
-    gpu_indices: "0,1,2"  # Optional: specify GPUs in config
+    gpu_indices: "0,1,2"  # Simple format (default node)
+    # Or: gpu_indices: "ossc9424vm1:0,1;ossc9424vm2:0,1"  # Multi-node
     experiments:
       - n: 10
         c: 100
@@ -600,8 +721,9 @@ Config file format (YAML):
     parser.add_argument("--g", type=int, help="Prefix gap")
     
     # GPU assignment
-    parser.add_argument("--gpus", help="Available GPU indices (e.g., '0,1,2' or '0-3'). "
-                       "Assigns models to GPUs round-robin within each experiment.")
+    parser.add_argument("--gpus", help="GPU specification. Formats:\n"
+                       "  Simple: '0,1,2' or '0-3' (uses default node ossc9424vm1)\n"
+                       "  Per-node: 'ossc9424vm1:0,1,2' or 'ossc9424vm1:0,1;ossc9424vm2:2,3'")
     
     # Directory overrides
     parser.add_argument("--models-dir", help="Models configuration directory")
@@ -611,11 +733,12 @@ Config file format (YAML):
     
     args = parser.parse_args()
     
-    # Parse GPU list if provided
-    available_gpus = None
+    # Parse GPU spec if provided
+    gpu_spec = None
     if args.gpus:
-        available_gpus = parse_gpu_list(args.gpus)
-        print(f"GPU assignment enabled: {available_gpus}")
+        gpu_spec = parse_gpu_spec(args.gpus)
+        gpu_slots = flatten_gpu_spec(gpu_spec)
+        print(f"GPU assignment enabled: {[f'{n}:GPU{g}' for n, g in gpu_slots]}")
     
     # Determine mode
     if args.config:
@@ -626,7 +749,7 @@ Config file format (YAML):
             output_base_dir=Path(args.output_dir) if args.output_dir else None,
             slurm_output_dir=Path(args.slurm_dir) if args.slurm_dir else None,
             log_dir=args.log_dir,
-            available_gpus=available_gpus,
+            gpu_spec=gpu_spec,
         )
     elif args.models:
         # Individual experiment mode

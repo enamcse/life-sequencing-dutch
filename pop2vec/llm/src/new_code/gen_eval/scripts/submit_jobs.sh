@@ -115,13 +115,29 @@ fi
 
 # Associative arrays to track job IDs
 declare -A GEN_JOB_IDS       # Script name -> Job ID (for stats dependencies)
-declare -A GPU_LAST_JOB_IDS  # GPU index -> Last job ID (for sequential execution)
+declare -A GPU_LAST_JOB_IDS  # "node:gpu_index" -> Last job ID (for sequential execution)
 
 # Function to get GPU index from script (by reading the "GPU Index:" line from script)
 get_gpu_index_from_script() {
     local script="$1"
     local gpu_idx=$(grep -o 'GPU Index: [0-9-]*' "$script" 2>/dev/null | grep -o '[0-9-]*' | head -1)
     echo "${gpu_idx:--1}"
+}
+
+# Function to get node name from script (by reading the "Node:" line from script - the config one, not the $(hostname))
+get_node_from_script() {
+    local script="$1"
+    # Look for "Node: ossc9424vm1" pattern (the configured one, not the runtime $(hostname))
+    local node=$(grep '^echo "Node: ' "$script" 2>/dev/null | head -1 | sed 's/echo "Node: //' | sed 's/"$//')
+    echo "${node:-unknown}"
+}
+
+# Function to get GPU slot key (node:gpu_index) for tracking dependencies
+get_gpu_slot_key() {
+    local script="$1"
+    local node=$(get_node_from_script "$script")
+    local gpu_idx=$(get_gpu_index_from_script "$script")
+    echo "${node}:${gpu_idx}"
 }
 
 # Submit generation jobs
@@ -133,13 +149,15 @@ if [[ "$STATS_ONLY" != "true" && -n "$GEN_SCRIPTS" ]]; then
         # Create the corresponding stats script name by replacing gen_ with stats_
         stats_script_name=${script_basename/gen_/stats_}
         
-        # Get GPU index from script
+        # Get GPU slot key (node:gpu_index) for dependency tracking
+        GPU_SLOT=$(get_gpu_slot_key "$script")
         GPU_IDX=$(get_gpu_index_from_script "$script")
+        NODE=$(get_node_from_script "$script")
         
-        # Build dependency argument (for sequential GPU execution)
+        # Build dependency argument (for sequential GPU execution on same node:gpu)
         DEP_ARG=""
-        if [[ "$GPU_IDX" != "-1" && -n "${GPU_LAST_JOB_IDS[$GPU_IDX]:-}" ]]; then
-            DEP_ARG="--dependency=afterany:${GPU_LAST_JOB_IDS[$GPU_IDX]}"
+        if [[ "$GPU_IDX" != "-1" && -n "${GPU_LAST_JOB_IDS[$GPU_SLOT]:-}" ]]; then
+            DEP_ARG="--dependency=afterany:${GPU_LAST_JOB_IDS[$GPU_SLOT]}"
         fi
         
         if [[ "$DRY_RUN" == "true" ]]; then
@@ -148,16 +166,16 @@ if [[ "$STATS_ONLY" != "true" && -n "$GEN_SCRIPTS" ]]; then
             else
                 echo "[DRY RUN] sbatch $script"
             fi
-            echo "  GPU Index: $GPU_IDX"
+            echo "  GPU Slot: $GPU_SLOT"
             # Use a fake job ID for dry run
             GEN_JOB_IDS["$stats_script_name"]="DRY_RUN_ID"
             if [[ "$GPU_IDX" != "-1" ]]; then
-                GPU_LAST_JOB_IDS["$GPU_IDX"]="DRY_RUN_ID"
+                GPU_LAST_JOB_IDS["$GPU_SLOT"]="DRY_RUN_ID"
             fi
         else
-            echo "Submitting: $script_basename (GPU: $GPU_IDX)"
+            echo "Submitting: $script_basename ($GPU_SLOT)"
             if [[ -n "$DEP_ARG" ]]; then
-                echo "  Depends on: ${GPU_LAST_JOB_IDS[$GPU_IDX]}"
+                echo "  Depends on job: ${GPU_LAST_JOB_IDS[$GPU_SLOT]}"
                 JOB_ID=$(sbatch $DEP_ARG "$script" | awk '{print $4}')
             else
                 JOB_ID=$(sbatch "$script" | awk '{print $4}')
@@ -165,7 +183,7 @@ if [[ "$STATS_ONLY" != "true" && -n "$GEN_SCRIPTS" ]]; then
             echo "  Job ID: $JOB_ID"
             GEN_JOB_IDS["$stats_script_name"]="$JOB_ID"
             if [[ "$GPU_IDX" != "-1" ]]; then
-                GPU_LAST_JOB_IDS["$GPU_IDX"]="$JOB_ID"
+                GPU_LAST_JOB_IDS["$GPU_SLOT"]="$JOB_ID"
             fi
         fi
     done
