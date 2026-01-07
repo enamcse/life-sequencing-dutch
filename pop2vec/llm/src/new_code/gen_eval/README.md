@@ -55,13 +55,17 @@ vim pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml
 python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
     --config pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml
 
+# 4b. (Optional) With GPU assignment for experiment-wise distribution
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
+    --config pop2vec/llm/src/new_code/gen_eval/config/experiments_config.yaml \
+    --gpus 0,1,2,3
+
 # 5. Submit jobs
 bash pop2vec/llm/src/new_code/gen_eval/scripts/submit_jobs.sh \
     --experiment exp_n10_c100_h20_g100
 
-# 6. Check progress
-python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress \
-    --experiment exp_n10_c100_h20_g100
+# 6. Check progress (table view with timing info)
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress
 ```
 
 ## Alternative: Command Line Method
@@ -87,7 +91,19 @@ python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
 | n | Number of people | 10, 100, 1000 |
 | c | Generations per person | 100, 1000 |
 | h | Horizon (tokens to generate) | 20, 50, 100 |
-| g | Prefix gap | 100 (gives 1, 101, 201, ...) |
+| g | Prefix gap | 100 (gives 7, 100, 200, 300, ...) |
+
+### Prefix Lengths
+
+By default, generation happens at positions: `[7, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]`
+
+- **Position 7**: After demographic tokens `[CLS] (gender, municipality, birth_year, birth_month) [SEP]`
+- **Positions 100-1000**: Increment by 100 to cover the full sequence
+
+You can override prefix lengths explicitly in the experiment config:
+```yaml
+prefix_lengths: [7, 100, 200, 300, 400, 500]  # Custom prefix lengths
+```
 
 ## Output Format
 
@@ -313,6 +329,133 @@ For each token in the vocabulary:
 └─────────────────┘     └───────────────────┘     └─────────────────┘
 ```
 
+## GPU Assignment
+
+Jobs can be assigned to specific GPU indices to optimize resource utilization and prevent memory conflicts.
+
+### Experiment-wise GPU Assignment
+
+When using the `--gpus` flag, experiments are distributed across available GPUs:
+
+```bash
+# Assign experiments to GPUs 0, 1, 2, 3
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
+    --config experiments_config.yaml --gpus 0,1,2,3
+
+# Range syntax also works
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.generate_slurm \
+    --config experiments_config.yaml --gpus 0-3
+```
+
+**How it works:**
+- Each experiment gets assigned to a GPU index (round-robin if more experiments than GPUs)
+- All models for that experiment use the same GPU
+- Jobs on the same GPU run sequentially (via SLURM dependencies)
+
+**Example with 4 experiments and 4 GPUs:**
+```
+Experiment          GPU Index
+exp_n10_c100        0
+exp_n100_c100       1
+exp_n1000_c100      2
+exp_n100_c1000      3
+```
+
+### Sequential GPU Execution
+
+When submitting jobs, the `submit_jobs.sh` script automatically:
+
+1. Reads GPU index from generated scripts
+2. Tracks the last job ID for each GPU
+3. Adds SLURM dependencies so jobs on the same GPU run sequentially
+4. Statistics jobs depend on their corresponding generation jobs
+
+This prevents GPU memory conflicts when running large models.
+
+### Config File GPU Specification
+
+You can also specify GPUs in the config file:
+
+```yaml
+models:
+  - Gen-medium
+  - Gen-BASE
+  
+gpu_indices: "0,1,2,3"  # Specify GPUs in config
+
+experiments:
+  - name: exp_n10_c100_h20_g100
+    n: 10
+    c: 100
+    h: 20
+    g: 100
+```
+
+## Check Progress
+
+The `check_progress.py` script provides a table view of job status with timing information.
+
+### Table View
+
+```bash
+# Show all experiments and models
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress
+
+# Filter by experiment or model
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress \
+    -e exp_n10_c100 -m Gen-medium Gen-BASE
+```
+
+**Output example:**
+```
+============================================================
+ Generation Jobs
+============================================================
+Model              exp_n10_c100   exp_n100_c100   exp_n1000_c100
+----------------------------------------------------------------
+Gen-medium         ✓ 2h15m        ⟳              -
+Gen-BASE           ✓ 3h42m        ✓ 4h10m        ⏳
+Gen-medium-bd      ✗              -              -
+Gen-BASE-bd        ✓ 2h30m        ✓ 3h55m        ⟳
+
+Legend: ✓=completed, ⟳=running, ⏳=pending, ✗=failed, -=not started
+```
+
+### Status Symbols
+
+| Symbol | Status | Description |
+|--------|--------|-------------|
+| ✓ | Completed | Output file exists |
+| ⟳ | Running | Job is running in SLURM |
+| ⏳ | Pending | Job is queued in SLURM |
+| ✗ | Failed | Error log contains errors |
+| - | Not started | No job submitted yet |
+
+### Command Options
+
+```bash
+# Detailed timing information per job
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress --detailed
+
+# Summary statistics only
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress --summary
+
+# Show only generation or statistics jobs
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress --gen-only
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress --stats-only
+
+# Custom log directory
+python -m pop2vec.llm.src.new_code.gen_eval.scripts.check_progress \
+    --log-dir /gpfs/ostor/ossc9424/logs
+```
+
+### Summary Statistics
+
+The summary includes:
+- Total jobs, completed, running, pending, failed, not started counts
+- Percentage completion
+- Average, min, max duration for completed jobs
+
 ## Adding New Models
 
 ```bash
@@ -340,7 +483,9 @@ experiment_name: "my_experiment"
 num_people: 50
 num_generations: 500
 horizon: 30
-prefix_lengths: [1, 50, 100, 150, 200]
+# Default prefix_lengths: [7, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+# Override with custom values:
+prefix_lengths: [7, 100, 200, 300, 400, 500]
 top_k: 20
 temperature: 1.0
 seed: 42
@@ -357,4 +502,91 @@ statistics:
   cpus: 8
   mem: "32G"
   time: "12:00:00"
+```
+
+## H5 Sequence Utilities
+
+Two utility scripts for analyzing and extracting sequences from large HDF5 datasets:
+
+### h5_sequence_statistics.py
+
+Fast, parallel statistics on sequence properties (age distributions, criteria matching, etc.).
+
+```bash
+# Basic usage
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_statistics \
+    --h5_file encoded.h5 --output stats_report.txt
+
+# With more workers for faster processing
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_statistics \
+    --h5_file encoded.h5 --n_workers 16 --chunk_size 200000
+```
+
+**Output:**
+- `*_stats.txt` - Detailed report with:
+  - Counts for each criterion (childhood start, full length, end-of-life)
+  - All pairwise combinations of criteria
+  - Decade distributions at indices 0, 6, and 1023
+  - Age distributions at key indices
+  - Top (age_0, age_1023) pair frequencies
+- `*_age_pairs.csv` - Full (age_0, age_1023) pair data for analysis
+
+**Criteria checked:**
+1. **Childhood start**: age at index 6 is in 0-9
+2. **Full length**: token at index 1023 is non-zero OR age at index 1023 is non-zero
+3. **End-of-life**: age at index 1023 is in 70-99
+
+### h5_sequence_extractor.py
+
+Extract sequences matching specific criteria (e.g., for training subset creation).
+
+```bash
+# Extract 10,000 sequences matching all three criteria
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_extractor \
+    --h5_file encoded.h5 --output extracted.h5 --n_sequences 10000
+
+# Custom criteria selection
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_extractor \
+    --h5_file encoded.h5 --output extracted.h5 \
+    --criteria childhood_start,full_length,decade_80 \
+    --n_sequences 5000
+
+# Just find matching indices without extracting
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_extractor \
+    --h5_file encoded.h5 --output extracted.h5 \
+    --find_only --save_indices matching_indices.npy
+```
+
+**Available criteria:**
+| Criterion | Description |
+|-----------|-------------|
+| `childhood_start` | Age at index 6 is in 0-9 |
+| `full_length` | Token/age at index 1023 is non-zero |
+| `end_of_life` | Age at index 1023 is in 70-99 |
+| `decade_70` | Age at index 1023 is in 70-79 |
+| `decade_80` | Age at index 1023 is in 80-89 |
+| `decade_90` | Age at index 1023 is in 90-99 |
+| `all` | Shorthand for childhood_start,full_length,end_of_life |
+
+**Output:**
+- `extracted.h5` - HDF5 file with selected sequences
+  - Same structure as source: `input_ids` with shape (N, 4, 1024)
+  - Additional `original_indices` dataset for reference
+  - Metadata attributes (source file, seed, etc.)
+- `extracted_summary.txt` - Extraction details and statistics
+
+**Example workflow:**
+
+```bash
+# 1. First, analyze the full dataset
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_statistics \
+    --h5_file /path/to/encoded.h5 --output analysis.txt --n_workers 16
+
+# 2. Check how many sequences match all criteria
+# (see "ALL THREE CRITERIA" in the output report)
+
+# 3. Extract a subset for training/evaluation
+python -m pop2vec.llm.src.new_code.gen_eval.src.h5_sequence_extractor \
+    --h5_file /path/to/encoded.h5 --output subset_10k.h5 \
+    --n_sequences 10000 --seed 42 --n_workers 16
 ```
