@@ -1,0 +1,87 @@
+# Supervisor Configuration
+#
+# This file configures the pipeline supervisor.
+# Edit this file before running: sbatch supervisor.slurm
+#
+# The supervisor will:
+#   1. Submit generation jobs (GPU) with collision avoidance
+#   2. Monitor for completion
+#   3. Submit statistics jobs (CPU) when generation finishes
+#   4. Track failures and optionally resubmit
+#   5. Write a human-readable dashboard
+
+# ============================================================================
+# Models to Evaluate
+# ============================================================================
+# List all model names. These must match the folder names in config/models/
+# and the SLURM script naming convention (gen_<model>_<exp>.sh)
+
+models:
+  - model_v1_gen_20251117
+  # - model_v2
+  # - model_v3
+  # - model_v4
+  # - model_v5
+
+# ============================================================================
+# Experiments to Run
+# ============================================================================
+# List all experiment names. These must match the SLURM script naming.
+
+experiments:
+  - exp_n10_c100_h20_g100      # Quick test: 2.2e5 tokens
+  - exp_n100_c100_h20_g100     # Medium: 2.2e6 tokens
+  - exp_n100_c1000_h20_g100    # Large: 2.2e7 tokens
+  - exp_n1000_c100_h20_g100    # Large: 2.2e7 tokens
+
+# ============================================================================
+# GPU Configuration
+# ============================================================================
+# Define which GPUs are available on which nodes.
+# The supervisor will distribute jobs across these GPU slots
+# and ensure no two jobs run on the same GPU simultaneously.
+
+gpus:
+  ossc9424vm1:
+    - 0
+    - 1
+    - 2
+    - 3
+  # Uncomment if you have access to a second node:
+  # ossc9424vm2:
+  #   - 0
+  #   - 1
+  #   - 2
+  #   - 3
+
+# ============================================================================
+# Supervisor Behavior
+# ============================================================================
+
+# How often to check job status (seconds)
+poll_interval_seconds: 60
+
+# Automatically submit statistics jobs when generation completes
+auto_submit_stats: true
+
+# Automatically resubmit failed jobs
+auto_resubmit_failed: false
+
+# Maximum retry attempts for failed jobs
+max_retries: 2
+
+# ============================================================================
+# Paths (usually don't need to change)
+# ============================================================================
+
+# Where SLURM scripts are located
+# slurm_dir: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/slurm_scripts
+
+# Where output files are written
+# output_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval
+
+# Where SLURM logs are written
+# log_dir: /projects/0/prjs1589/stonybrook/logs
+
+# Where supervisor state is stored
+# state_dir: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/supervisor_state

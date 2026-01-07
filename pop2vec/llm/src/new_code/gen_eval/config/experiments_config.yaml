@@ -72,7 +72,21 @@ experiments:
       time: "12:00:00"
       mem: "64G"
       partition: "rome"
-  # Large scale experiment (uncomment when ready)
+  # Large scale experiment - n1000_c100
+  - n: 1000
+    c: 100
+    h: 20
+    g: 100
+    compute_by_age: true
+    generation:
+      time: "72:00:00"
+      mem: "128G"
+    statistics:
+      time: "24:00:00"
+      mem: "64G"
+      partition: "rome"
+
+  # Uncomment for even larger:
   # - n: 1000
   #   c: 1000
   #   h: 20

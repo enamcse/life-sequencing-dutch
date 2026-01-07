@@ -101,6 +101,119 @@ def get_slurm_jobs() -> Dict[str, Dict]:
         return {}
 
 
+@dataclass
+class ExperimentStats:
+    """Statistics for a set of jobs."""
+    total: int = 0
+    completed: int = 0
+    failed: int = 0
+    running: int = 0
+    pending: int = 0
+    total_duration_sec: float = 0.0
+    durations: List[float] = field(default_factory=list)
+
+    @property
+    def avg_duration(self) -> str:
+        if not self.durations:
+            return "-"
+        avg_sec = sum(self.durations) / len(self.durations)
+        return str(timedelta(seconds=int(avg_sec)))
+
+
+def print_time_matrix(job_matrix: Dict[str, Dict[str, JobInfo]]):
+    """Print a matrix of execution times (Experiment vs Model)."""
+    experiments = sorted(list(set(exp for models in job_matrix.values() for exp in models.keys())))
+    models = sorted(list(job_matrix.keys()))
+    
+    print("\n" + "="*80)
+    print("EXECUTION TIME MATRIX (Generation Phase)")
+    print("="*80)
+    
+    # Header
+    print(f"{'Model':<30} |", end="")
+    for exp in experiments:
+        print(f" {exp:<20} |", end="")
+    print(f" {'AVG':<10} |")
+    print("-" * (30 + 23 * len(experiments) + 13))
+    
+    # Rows
+    for model in models:
+        print(f"{model:<30} |", end="")
+        model_durations = []
+        
+        for exp in experiments:
+            job = job_matrix.get(model, {}).get(exp)
+            duration_str = "-"
+            
+            if job and job.job_type == 'gen':
+                if job.duration:
+                    duration_str = job.duration_str
+                    model_durations.append(job.duration.total_seconds())
+                elif job.status == 'failed':
+                    duration_str = "FAILED"
+                elif job.status == 'running':
+                    duration_str = "RUNNING"
+            
+            print(f" {duration_str:<20} |", end="")
+        
+        # Row Average
+        if model_durations:
+            avg = sum(model_durations) / len(model_durations)
+            avg_str = str(timedelta(seconds=int(avg)))
+        else:
+            avg_str = "-"
+        print(f" {avg_str:<10} |")
+
+    print("-" * (30 + 23 * len(experiments) + 13))
+
+
+def print_experiment_statistics(jobs_list: List[JobInfo]):
+    """Print summary statistics for models and experiments."""
+    exp_stats = {}
+    model_stats = {}
+    
+    for job in jobs_list:
+        if job.job_type != 'gen': continue
+        
+        # Init stats objects
+        if job.experiment not in exp_stats: exp_stats[job.experiment] = ExperimentStats()
+        if job.model not in model_stats: model_stats[job.model] = ExperimentStats()
+        
+        # Update counts
+        exp_stats[job.experiment].total += 1
+        model_stats[job.model].total += 1
+        
+        if job.status == 'completed':
+            exp_stats[job.experiment].completed += 1
+            model_stats[job.model].completed += 1
+        elif job.status == 'failed':
+            exp_stats[job.experiment].failed += 1
+            model_stats[job.model].failed += 1
+        
+        # Update timings
+        if job.duration:
+            sec = job.duration.total_seconds()
+            exp_stats[job.experiment].durations.append(sec)
+            model_stats[job.model].durations.append(sec)
+
+    print("\n" + "="*80)
+    print("STATISTICS SUMMARY")
+    print("="*80)
+    
+    print("\nBy Experiment:")
+    print(f"{'Experiment':<25} | {'Comp':<5} | {'Fail':<5} | {'Avg Time':<10}")
+    print("-" * 55)
+    for exp, stats in exp_stats.items():
+        print(f"{exp:<25} | {stats.completed:<5} | {stats.failed:<5} | {stats.avg_duration:<10}")
+        
+    print("\nBy Model:")
+    print(f"{'Model':<30} | {'Comp':<5} | {'Fail':<5} | {'Avg Time':<10}")
+    print("-" * 60)
+    for model, stats in model_stats.items():
+        print(f"{model:<30} | {stats.completed:<5} | {stats.failed:<5} | {stats.avg_duration:<10}")
+    print()
+
+
 def parse_datetime(date_str: str) -> Optional[datetime]:
     """Parse datetime from log file format."""
     if not date_str:
@@ -394,183 +507,86 @@ def print_summary(
                     pending += 1
                 elif job.status == 'failed':
                     failed += 1
-                else:
+                elif job.status == 'not_started':
                     not_started += 1
         
         print(f"\n{title}:")
-        print(f"  Total jobs:     {total}")
-        if total > 0:
-            print(f"  Completed:      {completed} ({100*completed/total:.1f}%)")
-        else:
-            print(f"  Completed:      0")
-        print(f"  Running:        {running}")
-        print(f"  Pending:        {pending}")
-        print(f"  Failed:         {failed}")
-        print(f"  Not started:    {not_started}")
+        print(f"  Total: {total}")
+        print(f"  Completed: {completed} ({completed/total*100:.1f}%)")
+        print(f"  Running: {running}")
+        print(f"  Pending: {pending}")
+        print(f"  Failed: {failed}")
+        print(f"  Not Started: {not_started}")
         
         if durations:
             avg_duration = sum(durations) / len(durations)
-            min_duration = min(durations)
-            max_duration = max(durations)
-            
-            print(f"\n  Timing (completed jobs):")
-            print(f"    Average:      {timedelta(seconds=int(avg_duration))}")
-            print(f"    Min:          {timedelta(seconds=int(min_duration))}")
-            print(f"    Max:          {timedelta(seconds=int(max_duration))}")
-
-
-def print_detailed_table(
-    jobs: Dict[str, Dict[str, Dict[str, JobInfo]]],
-    models: List[str],
-    experiments: List[str],
-):
-    """Print detailed information for each job."""
-    print(f"\n{'='*60}")
-    print(" Detailed Job Information")
-    print('='*60)
-    
-    for job_type in ['gen', 'stats']:
-        title = "Generation" if job_type == 'gen' else "Statistics"
-        print(f"\n{title} Jobs:")
-        print("-" * 60)
-        
-        for model in models:
-            print(f"\n  Model: {model}")
-            for exp in experiments:
-                job = jobs[job_type][model][exp]
-                print(f"    {exp}:")
-                print(f"      Status:   {job.symbol} {job.status}")
-                if job.job_id:
-                    print(f"      Job ID:   {job.job_id}")
-                if job.start_time:
-                    print(f"      Started:  {job.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                if job.end_time:
-                    print(f"      Ended:    {job.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                if job.duration:
-                    print(f"      Duration: {job.duration_str}")
-                if job.error_message:
-                    print(f"      Error:    {job.error_message[:80]}...")
-
-
-def get_experiments_and_models(slurm_dir: Path) -> Tuple[List[str], List[str]]:
-    """Get list of experiments and models from manifest files."""
-    experiments = set()
-    models = set()
-    
-    manifests = list(slurm_dir.glob("manifest_*.yaml"))
-    
-    for manifest_path in manifests:
-        exp_name = manifest_path.stem.replace('manifest_', '')
-        experiments.add(exp_name)
-        
-        try:
-            with open(manifest_path, 'r') as f:
-                manifest = yaml.safe_load(f)
-            
-            for script_info in manifest.get('scripts', []):
-                if 'model' in script_info:
-                    models.add(script_info['model'])
-        except Exception:
-            pass
-    
-    return sorted(list(experiments)), sorted(list(models))
+            avg_str = str(timedelta(seconds=int(avg_duration)))
+            print(f"  Avg Duration: {avg_str}")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Check progress of generative evaluation jobs",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    python check_progress.py                    # Show all experiments
-    python check_progress.py -e exp_n10_c100    # Single experiment
-    python check_progress.py --detailed         # Show timing details
-    python check_progress.py --summary          # Summary statistics only
-
-Status Symbols:
-    ✓  Completed - output file exists
-    ⟳  Running   - job is running in SLURM
-    ⏳  Pending   - job is queued in SLURM
-    ✗  Failed    - error log contains errors
-    -  Not started
-        """
-    )
-    
-    parser.add_argument("--experiment", "-e", nargs='*', 
-                       help="Experiment name(s) to check (default: all)")
-    parser.add_argument("--model", "-m", nargs='*',
-                       help="Model name(s) to check (default: all)")
-    parser.add_argument("--detailed", "-d", action="store_true",
-                       help="Show detailed timing information")
-    parser.add_argument("--summary", "-s", action="store_true",
-                       help="Show summary statistics only")
-    parser.add_argument("--output-dir", 
-                       default=DEFAULT_OUTPUT_DIR,
-                       help=f"Output base directory (default: {DEFAULT_OUTPUT_DIR})")
-    parser.add_argument("--log-dir",
-                       default=DEFAULT_LOG_DIR,
-                       help=f"Log directory (default: {DEFAULT_LOG_DIR})")
-    parser.add_argument("--slurm-dir",
-                       help="SLURM scripts directory (default: auto-detect from script location)")
-    parser.add_argument("--gen-only", action="store_true",
-                       help="Show only generation jobs")
-    parser.add_argument("--stats-only", action="store_true",
-                       help="Show only statistics jobs")
-    
+    parser = argparse.ArgumentParser(description="Check progress of generative evaluation jobs")
+    parser.add_argument("--config", help="Path to run config YAML (finds models/exp)")
+    parser.add_argument("--experiment", "-e", nargs="+", help="Specific experiment(s) to check")
+    parser.add_argument("--models", "-m", nargs="+", help="Specific model(s) to check")
+    parser.add_argument("--log-dir", default=DEFAULT_LOG_DIR, help="SLURM log directory")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Output base directory")
+    parser.add_argument("--detailed", action="store_true", help="Show detailed output")
+    parser.add_argument("--summary", action="store_true", help="Show summary only")
+    parser.add_argument("--stats", action="store_true", help="Show detailed statistics (time matrix)")
     args = parser.parse_args()
     
-    # Resolve paths
-    script_dir = Path(__file__).parent.parent
-    slurm_dir = Path(args.slurm_dir) if args.slurm_dir else script_dir / "slurm_scripts"
-    output_base = Path(args.output_dir)
+    # Auto-detect models and experiments if not provided
+    models = args.models
+    experiments = args.experiment
+    
+    if not models or not experiments:
+        # Try to find all directories in output_dir
+        output_base = Path(args.output_dir)
+        if output_base.exists():
+            if not models:
+                models = [d.name for d in output_base.iterdir() if d.is_dir()]
+                models.sort()
+            
+            if not experiments and models:
+                # Find experiments common to all models? Or just union?
+                # Let's find union of all experiments found in first model
+                first_model_dir = output_base / models[0]
+                if first_model_dir.exists():
+                    experiments = [d.name for d in first_model_dir.iterdir() if d.is_dir()]
+                    experiments.sort()
+    
+    # Fallback default values
+    if not models:
+        models = ["model_v1_gen_20251117"]
+    if not experiments:
+        experiments = ["exp_n10_c100_h20_g100"]
+    
+    print(f"Checking progress for {len(models)} models and {len(experiments)} experiments...")
+    
     log_dir = Path(args.log_dir)
+    output_base = Path(args.output_dir)
     
-    # Get experiments and models
-    all_experiments, all_models = get_experiments_and_models(slurm_dir)
+    # Collect all job info
+    jobs_map = collect_job_info(models, experiments, output_base, log_dir)
     
-    if not all_experiments:
-        print(f"No experiments found in {slurm_dir}")
-        print("Run generate_slurm.py first to create experiment manifests.")
-        return
+    if not args.summary and not args.stats:
+        print_table(jobs_map, models, experiments, 'gen', args.detailed)
+        print_table(jobs_map, models, experiments, 'stats', args.detailed)
     
-    # Filter by arguments
-    if args.experiment:
-        experiments = [e for e in args.experiment if e in all_experiments]
-        if not experiments:
-            print(f"No matching experiments found. Available: {all_experiments}")
-            return
-    else:
-        experiments = all_experiments
+    if args.summary or args.stats or args.detailed:
+        print_summary(jobs_map, models, experiments)
     
-    if args.model:
-        models = [m for m in args.model if m in all_models]
-        if not models:
-            print(f"No matching models found. Available: {all_models}")
-            return
-    else:
-        models = all_models
-    
-    print(f"Checking progress...")
-    print(f"  Log directory:    {log_dir}")
-    print(f"  Output directory: {output_base}")
-    print(f"  Models:           {len(models)}")
-    print(f"  Experiments:      {len(experiments)}")
-    
-    # Collect all job information
-    jobs = collect_all_jobs(models, experiments, output_base, log_dir)
-    
-    # Display based on options
-    if args.summary:
-        print_summary(jobs, models, experiments)
-    elif args.detailed:
-        print_detailed_table(jobs, models, experiments)
-    else:
-        # Default: show tables
-        if not args.stats_only:
-            print_table(jobs, models, experiments, 'gen', show_details=True)
-        if not args.gen_only:
-            print_table(jobs, models, experiments, 'stats', show_details=True)
-        print_summary(jobs, models, experiments)
+    if args.stats:
+        # Convert map to list for stats
+        all_jobs = []
+        for stage in ['gen', 'stats']:
+            for m in models:
+                for e in experiments:
+                    all_jobs.append(jobs_map[stage][m][e])
+        
+        print_experiment_statistics(all_jobs)
+        print_time_matrix(jobs_map['gen'])
 
 
 if __name__ == "__main__":
