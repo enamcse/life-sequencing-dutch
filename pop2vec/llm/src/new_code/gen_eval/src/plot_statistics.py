@@ -565,15 +565,22 @@ Examples:
             events_config_path = args.events_config
         else:
             # Look in config directory or output directory
+            # Also check the standard gen_eval/config directory
+            script_dir = Path(__file__).parent.parent
+            standard_config_dir = script_dir / 'config'
+            
             possible_paths = [
                 os.path.join(output_dir, 'events_config.yaml'),
                 os.path.join(os.path.dirname(args.config), 'events_config.yaml'),
+                str(standard_config_dir / 'events_config.yaml'),
+                config.get('events_config_path', ''),  # Check if specified in run config
                 'events_config.yaml'
             ]
             events_config_path = None
             for path in possible_paths:
-                if os.path.exists(path):
+                if path and os.path.exists(path):
                     events_config_path = path
+                    logger.info(f"Found events config at: {events_config_path}")
                     break
     else:
         if not args.token_counts:

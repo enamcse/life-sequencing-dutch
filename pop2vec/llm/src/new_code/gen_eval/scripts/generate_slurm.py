@@ -225,6 +225,10 @@ def generate_run_config(model_config: dict, exp_config: dict, output_dir: Path) 
     n = exp_config.get('num_people', 10)
     c = exp_config.get('num_generations', 100)
     
+    # Get the standard events config path
+    script_dir = Path(__file__).parent.parent
+    events_config_path = script_dir / 'config' / 'events_config.yaml'
+    
     run_config = {
         **exp_config,
         'model_name': model_config['model_name'],
@@ -235,6 +239,8 @@ def generate_run_config(model_config: dict, exp_config: dict, output_dir: Path) 
         'sequences_path': str(output_dir / 'generated_sequences.parquet'),
         'original_sequences_path': str(output_dir / 'original_sequences.parquet'),
         'ages_path': str(output_dir / 'ages.parquet'),
+        # Events config for plotting
+        'events_config_path': str(events_config_path),
         # Include n and c in statistics filenames
         'statistics_path': str(output_dir / f'statistics_n{n}_c{c}_full.csv'),
         'statistics_summary_path': str(output_dir / f'statistics_n{n}_c{c}_summary.csv'),
