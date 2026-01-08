@@ -26,10 +26,22 @@ You have:
 ### The Solution
 A **supervisor job** that runs on the work node (`ossc9424vm0`) and:
 1. Submits generation jobs to GPUs with collision avoidance
-2. Monitors completion via SLURM queue and output files
-3. Auto-submits statistics jobs when generation finishes
-4. Handles failures with optional auto-retry
-5. Writes a human-readable dashboard every 60 seconds
+2. **Dynamically patches scripts** with correct `--nodelist` and `CUDA_VISIBLE_DEVICES`
+3. Monitors completion via SLURM queue and output files
+4. Auto-submits statistics+plots jobs when generation finishes
+5. Handles failures with optional auto-retry
+6. Writes a human-readable dashboard every 60 seconds
+
+### Pipeline Stages
+```
+Generation (GPU)  →  Statistics + Plots (CPU)
+   ↓                       ↓
+gen_model_exp.sh      stats_model_exp.sh
+   ↓                       ↓
+generated_sequences   token_counts.csv + plots/
+```
+
+The stats job now **automatically runs plot generation** after computing statistics.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

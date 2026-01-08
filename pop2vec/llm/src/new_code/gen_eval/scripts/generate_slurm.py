@@ -86,6 +86,7 @@ echo "Completed: $(date)"
 '''
 
 # Template for SLURM statistics script (CPU)
+# This script runs both statistics computation AND plot generation
 SLURM_STATS_TEMPLATE = '''#!/bin/bash
 #SBATCH --job-name=stats_{model_name}_{exp_name}
 #SBATCH --ntasks-per-node=1
@@ -98,7 +99,7 @@ SLURM_STATS_TEMPLATE = '''#!/bin/bash
 #SBATCH -o {log_dir}/%x-%j.out
 
 echo "=========================================="
-echo "Statistics Job: {model_name}"
+echo "Statistics + Plots Job: {model_name}"
 echo "Experiment: {exp_name}"
 echo "=========================================="
 echo "Started: $(date)"
@@ -110,12 +111,44 @@ echo ""
 cd ~/life-sequencing-dutch/
 source requirements/load_venv.sh
 
-# Run statistics computation
+# Step 1: Run statistics computation
+echo ""
+echo "=========================================="
+echo "Step 1/2: Computing Statistics"
+echo "=========================================="
 python -m pop2vec.llm.src.new_code.gen_eval.src.compute_statistics \\
     --config {config_path}
 
+STATS_EXIT_CODE=$?
+if [ $STATS_EXIT_CODE -ne 0 ]; then
+    echo "ERROR: Statistics computation failed with exit code $STATS_EXIT_CODE"
+    exit $STATS_EXIT_CODE
+fi
+
 echo ""
-echo "Completed: $(date)"
+echo "Statistics Complete!"
+
+# Step 2: Generate plots
+echo ""
+echo "=========================================="
+echo "Step 2/2: Generating Plots"
+echo "=========================================="
+python -m pop2vec.llm.src.new_code.gen_eval.src.plot_statistics \\
+    --config {config_path}
+
+PLOT_EXIT_CODE=$?
+if [ $PLOT_EXIT_CODE -ne 0 ]; then
+    echo "WARNING: Plot generation failed with exit code $PLOT_EXIT_CODE"
+    echo "Statistics were computed successfully, but plots failed."
+    # Don't exit with error - stats are more important
+fi
+
+echo ""
+echo "Plots Complete!"
+echo ""
+echo "=========================================="
+echo "All Steps Completed: $(date)"
+echo "=========================================="
 '''
 
 

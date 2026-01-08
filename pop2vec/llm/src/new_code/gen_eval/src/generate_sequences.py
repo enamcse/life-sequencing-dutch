@@ -79,7 +79,7 @@ class GenerationConfig:
     # Special tokens
     pad_token: str = "[PAD]"
     cls_token: str = "[CLS]"
-    death_token: str = "[DEATH]"
+    death_token: str = "[death]_[death]"
     
     # Random seed
     seed: int = 42
@@ -608,7 +608,7 @@ def load_config(config_path: str) -> GenerationConfig:
         temperature=cfg.get('temperature', 1.0),
         pad_token=cfg.get('pad_token', '[PAD]'),
         cls_token=cfg.get('cls_token', '[CLS]'),
-        death_token=cfg.get('death_token', '[DEATH]'),
+        death_token=cfg.get('death_token', '[death]_[death]'),
         seed=cfg.get('seed', 42),
     )
 

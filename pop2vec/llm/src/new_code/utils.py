@@ -442,7 +442,7 @@ def load_special_ids(
     vocab_csv_path: str,
     pad_token: str = "[PAD]",
     cls_token: str = "[CLS]",
-    death_token: str = "[DEATH]",
+    death_token: str = "[death]_[death]",
     pad_fallback: int = 0,
 ) -> Dict[str, Optional[int]]:
     """

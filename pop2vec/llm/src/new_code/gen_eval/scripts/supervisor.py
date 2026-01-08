@@ -42,6 +42,7 @@ import subprocess
 import sys
 import time
 import yaml
+import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -186,17 +187,101 @@ def get_slurm_jobs(user: str = None) -> Dict[str, Dict]:
     return jobs
 
 
-def submit_job(script_path: str, dependency: str = None) -> Optional[str]:
+def patch_script_for_gpu(script_path: str, node: str, gpu_index: int) -> str:
+    """
+    Patch a SLURM script to use a specific node and GPU.
+    
+    Modifies:
+        - #SBATCH --nodelist=<node>
+        - export CUDA_VISIBLE_DEVICES=<gpu_index>
+    
+    Args:
+        script_path: Path to original SLURM script
+        node: Node name (e.g., 'ossc9424vm1')
+        gpu_index: GPU index (e.g., 0, 1, 2, 3)
+    
+    Returns:
+        Path to patched script (in same directory with .patched suffix)
+    """
+    script_path = Path(script_path)
+    content = script_path.read_text()
+    
+    # Pattern for nodelist line
+    nodelist_pattern = r'#SBATCH --nodelist=\S+'
+    nodelist_replacement = f'#SBATCH --nodelist={node}'
+    
+    # Pattern for CUDA_VISIBLE_DEVICES
+    cuda_pattern = r'export CUDA_VISIBLE_DEVICES=\d+'
+    cuda_replacement = f'export CUDA_VISIBLE_DEVICES={gpu_index}'
+    
+    # Check if nodelist exists, if not add it after partition line
+    if re.search(nodelist_pattern, content):
+        content = re.sub(nodelist_pattern, nodelist_replacement, content)
+    else:
+        # Add after #SBATCH -p or #SBATCH --partition line
+        partition_pattern = r'(#SBATCH\s+(-p|--partition)\s+\S+)'
+        if re.search(partition_pattern, content):
+            content = re.sub(partition_pattern, rf'\1\n{nodelist_replacement}', content)
+        else:
+            # Add after first #SBATCH line
+            content = re.sub(r'(#SBATCH\s+[^\n]+)', rf'\1\n{nodelist_replacement}', content, count=1)
+    
+    # Check if CUDA_VISIBLE_DEVICES exists, if not add it before nvidia-smi or python command
+    if re.search(cuda_pattern, content):
+        content = re.sub(cuda_pattern, cuda_replacement, content)
+    else:
+        # Try to add before nvidia-smi line
+        if 'nvidia-smi' in content:
+            content = re.sub(
+                r'(nvidia-smi)',
+                f'{cuda_replacement}\n\n\\1',
+                content,
+                count=1
+            )
+        # Or add before python command
+        elif 'python' in content:
+            content = re.sub(
+                r'(\n)(python\s)',
+                f'\\1{cuda_replacement}\n\\2',
+                content,
+                count=1
+            )
+        else:
+            # Add after "# Load environment" section or before first command
+            content = re.sub(
+                r'(source\s+\S+load_venv\.sh)',
+                rf'\1\n\n# Set GPU device\n{cuda_replacement}',
+                content,
+                count=1
+            )
+    
+    # Write patched script
+    patched_path = script_path.parent / f"{script_path.stem}.patched.sh"
+    patched_path.write_text(content)
+    patched_path.chmod(0o755)
+    
+    logging.info(f"[PATCH] {script_path.name} -> node={node}, GPU={gpu_index}")
+    
+    return str(patched_path)
+
+
+def submit_job(script_path: str, dependency: str = None, node: str = None, gpu_index: int = None) -> Optional[str]:
     """
     Submit a SLURM job and return the job ID.
     
     Args:
         script_path: Path to SLURM script
         dependency: Optional dependency string (e.g., "afterok:12345")
+        node: Optional node name to patch into script
+        gpu_index: Optional GPU index to patch into script
     
     Returns:
         Job ID if successful, None otherwise
     """
+    # Patch script if node/gpu specified
+    if node is not None and gpu_index is not None:
+        script_path = patch_script_for_gpu(script_path, node, gpu_index)
+    
     cmd = ['sbatch']
     if dependency:
         cmd.append(f'--dependency={dependency}')
@@ -210,7 +295,7 @@ def submit_job(script_path: str, dependency: str = None) -> Optional[str]:
         if match:
             return match.group(1)
     
-    print(f"[ERROR] Failed to submit {script_path}: {stderr}")
+    logging.error(f"[ERROR] Failed to submit {script_path}: {stderr}")
     return None
 
 
@@ -245,6 +330,23 @@ def check_statistics_complete(output_dir: Path, experiment: str) -> bool:
     return all((exp_dir / f).exists() for f in required_files)
 
 
+def check_plots_complete(output_dir: Path, experiment: str) -> bool:
+    """Check if plot output files exist."""
+    plots_dir = output_dir / experiment / 'plots'
+    if not plots_dir.exists():
+        return False
+    # Check for at least one plot file
+    png_files = list(plots_dir.glob('*.png'))
+    return len(png_files) > 0
+
+
+def check_stats_and_plots_complete(output_dir: Path, experiment: str) -> bool:
+    """Check if both statistics AND plots are complete."""
+    stats_ok = check_statistics_complete(output_dir, experiment)
+    plots_ok = check_plots_complete(output_dir, experiment)
+    return stats_ok and plots_ok
+
+
 def parse_log_for_completion(log_path: Path) -> Tuple[bool, Optional[str]]:
     """
     Parse a SLURM log file to check if job completed successfully.
@@ -258,10 +360,18 @@ def parse_log_for_completion(log_path: Path) -> Tuple[bool, Optional[str]]:
     try:
         content = log_path.read_text()
         
-        # Check for explicit completion marker
+        # Check for explicit completion markers
+        # Generation job
         if "Completed:" in content and "Generation Complete!" in content:
             return True, None
+        # Statistics job (old format)
         if "Completed:" in content and "Statistics Complete!" in content:
+            return True, None
+        # Stats + Plots job (new combined format)
+        if "All Steps Completed:" in content:
+            return True, None
+        # Just plots complete (in combined job)
+        if "Plots Complete!" in content and "Statistics Complete!" in content:
             return True, None
         
         # Check for common errors
@@ -348,13 +458,13 @@ class Supervisor:
         self.state_file = self.state_dir / "pipeline_state.json"
         self.dashboard_file = self.state_dir / "dashboard.txt"
         self.state = self._load_or_create_state()
-        
-        print(f"[SUPERVISOR] Initialized")
-        print(f"  Models: {len(self.models)}")
-        print(f"  Experiments: {len(self.experiments)}")
-        print(f"  GPU Slots: {len(self.gpu_slots)} ({self.gpu_slots})")
-        print(f"  Total Gen Jobs: {len(self.models) * len(self.experiments)}")
-    
+
+        logging.info(f"[SUPERVISOR] Initialized")
+        logging.info(f"  Models: {len(self.models)}")
+        logging.info(f"  Experiments: {len(self.experiments)}")
+        logging.info(f"  GPU Slots: {len(self.gpu_slots)} ({self.gpu_slots})")
+        logging.info(f"  Total Gen Jobs: {len(self.models) * len(self.experiments)}")
+
     def _load_or_create_state(self) -> PipelineState:
         """Load existing state or create new one."""
         if self.state_file.exists():
@@ -362,11 +472,11 @@ class Supervisor:
                 with open(self.state_file, 'r') as f:
                     data = json.load(f)
                 state = PipelineState.from_dict(data)
-                print(f"[SUPERVISOR] Loaded existing state from {self.state_file}")
+                logging.info(f"[SUPERVISOR] Loaded existing state from {self.state_file}")
                 return state
             except Exception as e:
-                print(f"[SUPERVISOR] Could not load state: {e}, creating new")
-        
+                logging.error(f"[SUPERVISOR] Could not load state: {e}, creating new")
+
         # Create new state
         state = PipelineState(
             models=self.models,
@@ -461,9 +571,24 @@ class Supervisor:
                 return
         
         elif job.job_type == 'stats':
-            if check_statistics_complete(model_dir, job.experiment):
+            # Stats job now includes plots, so check for both
+            if check_stats_and_plots_complete(model_dir, job.experiment):
                 job.status = JobStatus.COMPLETED
                 job.end_time = datetime.now().isoformat()
+                if job.start_time:
+                    start = datetime.fromisoformat(job.start_time)
+                    end = datetime.fromisoformat(job.end_time)
+                    job.duration_seconds = (end - start).total_seconds()
+                return
+            # Also accept just statistics complete (plots might have failed but stats succeeded)
+            elif check_statistics_complete(model_dir, job.experiment):
+                job.status = JobStatus.COMPLETED
+                job.end_time = datetime.now().isoformat()
+                if job.start_time:
+                    start = datetime.fromisoformat(job.start_time)
+                    end = datetime.fromisoformat(job.end_time)
+                    job.duration_seconds = (end - start).total_seconds()
+                logging.warning(f"[WARNING] {job.key}: Statistics complete but plots may have failed")
                 return
         
         # Check log for errors
@@ -514,7 +639,7 @@ class Supervisor:
             script_path = self._get_script_path(job.model, job.experiment, 'gen')
             
             if not script_path:
-                print(f"[WARNING] No script found for {job.key}")
+                logging.warning(f"[WARNING] No script found for {job.key}")
                 continue
             
             # Check for GPU dependency (another job on same slot)
@@ -525,8 +650,12 @@ class Supervisor:
                 if prev_job and prev_job.slurm_job_id:
                     dependency = f"afterany:{prev_job.slurm_job_id}"
             
-            # Submit
-            job_id = submit_job(str(script_path), dependency)
+            # Parse slot into node and gpu_index (format: "node:gpu_index")
+            node, gpu_index = slot.split(':')
+            gpu_index = int(gpu_index)
+            
+            # Submit with node and GPU patching
+            job_id = submit_job(str(script_path), dependency, node=node, gpu_index=gpu_index)
             
             if job_id:
                 job.slurm_job_id = job_id
@@ -535,11 +664,11 @@ class Supervisor:
                 job.submit_time = datetime.now().isoformat()
                 job.retry_count += 1
                 self.state.gpu_assignments[slot] = job.key
-                
-                print(f"[SUBMIT] {job.key} -> Job {job_id} on {slot}")
+
+                logging.info(f"[SUBMIT] {job.key} -> Job {job_id} on {slot}")
                 if dependency:
-                    print(f"         Depends on: {dependency}")
-    
+                    logging.info(f"         Depends on: {dependency}")
+
     def _submit_statistics_jobs(self):
         """Submit statistics jobs for completed generation jobs."""
         if not self.auto_submit_stats:
@@ -560,7 +689,7 @@ class Supervisor:
             
             script_path = self._get_script_path(job.model, job.experiment, 'stats')
             if not script_path:
-                print(f"[WARNING] No stats script found for {job.key}")
+                logging.warning(f"[WARNING] No stats script found for {job.key}")
                 continue
             
             # Submit (no GPU needed for stats)
@@ -570,7 +699,7 @@ class Supervisor:
                 job.slurm_job_id = job_id
                 job.status = JobStatus.QUEUED
                 job.submit_time = datetime.now().isoformat()
-                print(f"[SUBMIT] {job.key} -> Job {job_id}")
+                logging.info(f"[SUBMIT] {job.key} -> Job {job_id}")
     
     def _write_dashboard(self):
         """Write human-readable dashboard file."""
@@ -722,16 +851,16 @@ class Supervisor:
     
     def run(self, max_iterations: int = None):
         """Run the supervisor loop."""
-        print(f"[SUPERVISOR] Starting main loop (poll every {self.poll_interval}s)")
-        print(f"[SUPERVISOR] Dashboard: {self.dashboard_file}")
-        print(f"[SUPERVISOR] State: {self.state_file}")
-        
+        logging.info(f"[SUPERVISOR] Starting main loop (poll every {self.poll_interval}s)")
+        logging.info(f"[SUPERVISOR] Dashboard: {self.dashboard_file}")
+        logging.info(f"[SUPERVISOR] State: {self.state_file}")
+
         iteration = 0
         try:
             while True:
                 iteration += 1
-                print(f"\n[SUPERVISOR] === Iteration {iteration} at {datetime.now().strftime('%H:%M:%S')} ===")
-                
+                logging.info(f"\n[SUPERVISOR] === Iteration {iteration} at {datetime.now().strftime('%H:%M:%S')} ===")
+
                 self.run_once()
                 
                 # Check if all done
@@ -745,23 +874,23 @@ class Supervisor:
                 )
                 
                 if all_gen_done and all_stats_done:
-                    print("[SUPERVISOR] All jobs completed!")
+                    logging.info("[SUPERVISOR] All jobs completed!")
                     self._write_dashboard()
                     break
                 
                 if max_iterations and iteration >= max_iterations:
-                    print(f"[SUPERVISOR] Reached max iterations ({max_iterations})")
+                    logging.info(f"[SUPERVISOR] Reached max iterations ({max_iterations})")
                     break
                 
                 # Sleep
-                print(f"[SUPERVISOR] Sleeping {self.poll_interval}s...")
+                logging.info(f"[SUPERVISOR] Sleeping {self.poll_interval}s...")
                 time.sleep(self.poll_interval)
                 
         except KeyboardInterrupt:
-            print("\n[SUPERVISOR] Interrupted by user")
+            logging.info("\n[SUPERVISOR] Interrupted by user")
             self._save_state()
-        
-        print("[SUPERVISOR] Exiting")
+
+        logging.info("[SUPERVISOR] Exiting")
         return self.state
 
 
@@ -815,17 +944,17 @@ def main():
         max_retries = args.max_retries
     
     if not models or not experiments:
-        print("Error: Must specify models and experiments via --config or --models/--experiments")
+        logging.error("Error: Must specify models and experiments via --config or --models/--experiments")
         sys.exit(1)
     
     supervisor = Supervisor(
         models=models,
         experiments=experiments,
         gpus=gpus,
-        slurm_dir=args.slurm_dir,
-        output_dir=args.output_dir,
-        log_dir=args.log_dir,
-        state_dir=args.state_dir,
+        slurm_dir=config.get('slurm_dir', args.slurm_dir),
+        output_dir=config.get('output_dir', args.output_dir),
+        log_dir=config.get('log_dir', args.log_dir),
+        state_dir=config.get('state_dir', args.state_dir),
         max_retries=max_retries,
         poll_interval=poll_interval,
         auto_submit_stats=True,
@@ -836,4 +965,8 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        level=logging.INFO)
     main()
