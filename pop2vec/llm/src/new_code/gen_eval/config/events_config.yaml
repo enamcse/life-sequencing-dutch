@@ -11,6 +11,18 @@
 # You can generate a starting point using:
 #   python plot_statistics.py --create_events_config --vocab vocab.csv --output events_config.yaml
 
+# =============================================================================
+# Plot Configuration
+# =============================================================================
+
+# Top N most frequent tokens comparison plot
+top_n_tokens: 40        # Number of top tokens to plot (default: 40)
+skip_top_tokens: false  # Set to true to skip top tokens plots
+
+# =============================================================================
+# Life Events Configuration
+# =============================================================================
+
 life_events:
   # Death-related events
   death:

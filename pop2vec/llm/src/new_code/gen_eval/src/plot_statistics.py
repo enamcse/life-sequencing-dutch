@@ -79,7 +79,7 @@ DECADE_ORDER = [
 ]
 
 
-def load_events_config(config_path: str) -> Dict:
+def load_events_config(config_path: str) -> Tuple[Dict, Dict]:
     """
     Load life events configuration from YAML file.
     
@@ -89,15 +89,30 @@ def load_events_config(config_path: str) -> Dict:
             tokens: [token_id1, token_id2, ...]
             color: "#hexcolor" (optional)
             label: "Display Label" (optional)
+        
+        # Optional plot settings
+        top_n_tokens: 40
+        skip_top_tokens: false
+    
+    Returns:
+        Tuple of (life_events dict, plot_settings dict)
     """
     if not os.path.exists(config_path):
         logger.warning(f"Events config not found: {config_path}")
-        return {}
+        return {}, {}
     
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    return config.get('life_events', {})
+    life_events = config.get('life_events', {})
+    
+    # Extract plot settings
+    plot_settings = {
+        'top_n_tokens': config.get('top_n_tokens', 40),
+        'skip_top_tokens': config.get('skip_top_tokens', False),
+    }
+    
+    return life_events, plot_settings
 
 
 def load_token_counts(csv_path: str) -> pd.DataFrame:
@@ -443,6 +458,224 @@ def plot_real_vs_simulated_scatter(
     return output_path
 
 
+def plot_top_n_tokens_comparison(
+    token_counts_df: pd.DataFrame,
+    output_dir: str,
+    n_generations: int = 100,
+    horizon: int = 20,
+    top_n: int = 40,
+    log_scale: bool = False
+):
+    """
+    Plot the top N most frequent tokens comparing real vs simulated frequencies.
+    
+    Creates a horizontal bar chart with tokens ranked by real frequency,
+    showing real and simulated frequencies side by side.
+    
+    Y-axis: Frequency per million tokens (normalized by total tokens)
+    
+    Args:
+        token_counts_df: DataFrame with columns: decade, token_id, token, simulated_count, real_count, N_d
+        output_dir: Output directory for the plot
+        n_generations: Number of generations per person (c) 
+        horizon: Number of tokens per generation window (default 20)
+        top_n: Number of top tokens to plot (default 40)
+        log_scale: Whether to use log scale for x-axis
+    """
+    logger.info(f"Plotting top {top_n} most frequent tokens (real vs simulated)")
+    
+    # Aggregate counts across all decades
+    token_totals = token_counts_df.groupby(['token_id', 'token']).agg({
+        'simulated_count': 'sum',
+        'real_count': 'sum',
+        'N_d': 'sum'  # Total (person, prefix_len) combinations
+    }).reset_index()
+    
+    # Calculate total tokens for normalization
+    total_N_d = token_totals['N_d'].sum() / len(token_counts_df['token_id'].unique())  # Average N_d
+    total_real_tokens = token_counts_df.groupby('decade')['N_d'].first().sum() * horizon
+    total_simulated_tokens = total_real_tokens * n_generations
+    
+    # Compute frequency per million tokens
+    token_totals['real_freq_per_million'] = (
+        token_totals['real_count'] / total_real_tokens
+    ) * 1_000_000
+    
+    token_totals['simulated_freq_per_million'] = (
+        token_totals['simulated_count'] / total_simulated_tokens
+    ) * 1_000_000
+    
+    # Get top N by real frequency
+    top_tokens = token_totals.nlargest(top_n, 'real_count').copy()
+    
+    # Sort by real frequency for display (highest at top)
+    top_tokens = top_tokens.sort_values('real_freq_per_million', ascending=True)
+    
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(14, max(10, top_n * 0.35)))
+    
+    y_pos = np.arange(len(top_tokens))
+    bar_height = 0.35
+    
+    # Create labels with token name (truncated) and ID
+    labels = [
+        f"{str(row['token'])[:25]}{'...' if len(str(row['token'])) > 25 else ''} ({int(row['token_id'])})"
+        for _, row in top_tokens.iterrows()
+    ]
+    
+    # Plot bars
+    bars_real = ax.barh(y_pos + bar_height/2, top_tokens['real_freq_per_million'], 
+                        bar_height, label='Real', color='#2166ac', alpha=0.8)
+    bars_sim = ax.barh(y_pos - bar_height/2, top_tokens['simulated_freq_per_million'], 
+                       bar_height, label='Simulated', color='#b2182b', alpha=0.8)
+    
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel('Frequency per Million Tokens', fontsize=12)
+    ax.set_ylabel('Token (ID)', fontsize=12)
+    ax.set_title(f'Top {top_n} Most Frequent Tokens: Real vs Simulated', fontsize=14)
+    ax.legend(loc='lower right', fontsize=11)
+    ax.grid(True, alpha=0.3, axis='x')
+    
+    if log_scale:
+        ax.set_xscale('log')
+    
+    # Add value labels on bars
+    for bar in bars_real:
+        width = bar.get_width()
+        if width > 0:
+            ax.annotate(f'{width:.0f}',
+                       xy=(width, bar.get_y() + bar.get_height()/2),
+                       xytext=(3, 0), textcoords="offset points",
+                       ha='left', va='center', fontsize=7, color='#2166ac')
+    
+    for bar in bars_sim:
+        width = bar.get_width()
+        if width > 0:
+            ax.annotate(f'{width:.0f}',
+                       xy=(width, bar.get_y() + bar.get_height()/2),
+                       xytext=(3, 0), textcoords="offset points",
+                       ha='left', va='center', fontsize=7, color='#b2182b')
+    
+    plt.tight_layout()
+    
+    suffix = '_log' if log_scale else ''
+    output_path = os.path.join(output_dir, f'top_{top_n}_tokens_comparison{suffix}.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"Saved top tokens plot: {output_path}")
+    
+    # Also save a CSV with the data for reference
+    csv_path = os.path.join(output_dir, f'top_{top_n}_tokens_data.csv')
+    top_tokens_sorted = top_tokens.sort_values('real_freq_per_million', ascending=False)
+    top_tokens_sorted.to_csv(csv_path, index=False)
+    logger.info(f"Saved top tokens data: {csv_path}")
+    
+    return output_path
+
+
+def plot_top_n_tokens_scatter(
+    token_counts_df: pd.DataFrame,
+    output_dir: str,
+    n_generations: int = 100,
+    horizon: int = 20,
+    top_n: int = 40
+):
+    """
+    Scatter plot of real vs simulated frequencies for top N tokens.
+    
+    Points near the diagonal indicate good calibration.
+    Points above diagonal: over-represented in simulation.
+    Points below diagonal: under-represented in simulation.
+    
+    Args:
+        token_counts_df: DataFrame with token counts
+        output_dir: Output directory
+        n_generations: Number of generations per person
+        horizon: Tokens per generation window
+        top_n: Number of top tokens to include
+    """
+    logger.info(f"Plotting scatter for top {top_n} tokens")
+    
+    # Aggregate counts across all decades
+    token_totals = token_counts_df.groupby(['token_id', 'token']).agg({
+        'simulated_count': 'sum',
+        'real_count': 'sum',
+        'N_d': 'sum'
+    }).reset_index()
+    
+    # Calculate total tokens for normalization
+    total_real_tokens = token_counts_df.groupby('decade')['N_d'].first().sum() * horizon
+    total_simulated_tokens = total_real_tokens * n_generations
+    
+    # Compute frequency per million tokens
+    token_totals['real_freq_per_million'] = (
+        token_totals['real_count'] / total_real_tokens
+    ) * 1_000_000
+    
+    token_totals['simulated_freq_per_million'] = (
+        token_totals['simulated_count'] / total_simulated_tokens
+    ) * 1_000_000
+    
+    # Get top N by real frequency
+    top_tokens = token_totals.nlargest(top_n, 'real_count')
+    
+    fig, ax = plt.subplots(figsize=(12, 12))
+    
+    # Color by frequency rank
+    colors = plt.cm.viridis(np.linspace(0, 1, len(top_tokens)))
+    
+    scatter = ax.scatter(
+        top_tokens['real_freq_per_million'],
+        top_tokens['simulated_freq_per_million'],
+        c=range(len(top_tokens)),
+        cmap='viridis',
+        s=100,
+        alpha=0.8,
+        edgecolors='black',
+        linewidths=0.5
+    )
+    
+    # Diagonal line (perfect calibration)
+    max_val = max(
+        top_tokens['real_freq_per_million'].max(),
+        top_tokens['simulated_freq_per_million'].max()
+    ) * 1.1
+    ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, linewidth=2, label='Perfect calibration')
+    
+    # Add token labels for top 10
+    for idx, (_, row) in enumerate(top_tokens.head(10).iterrows()):
+        ax.annotate(
+            f"{str(row['token'])[:15]}",
+            (row['real_freq_per_million'], row['simulated_freq_per_million']),
+            xytext=(5, 5), textcoords='offset points',
+            fontsize=8, alpha=0.8
+        )
+    
+    ax.set_xlabel('Real Frequency (per Million Tokens)', fontsize=12)
+    ax.set_ylabel('Simulated Frequency (per Million Tokens)', fontsize=12)
+    ax.set_title(f'Real vs Simulated: Top {top_n} Tokens', fontsize=14)
+    ax.set_xlim(0, max_val)
+    ax.set_ylim(0, max_val)
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper left')
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
+    cbar.set_label('Frequency Rank (1=most frequent)', fontsize=10)
+    
+    plt.tight_layout()
+    
+    output_path = os.path.join(output_dir, f'top_{top_n}_tokens_scatter.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"Saved scatter plot: {output_path}")
+    return output_path
+
+
 def create_default_events_config(vocab_path: str, output_path: str):
     """
     Create a default events config by scanning the vocabulary for common life events.
@@ -525,6 +758,10 @@ Examples:
                         help="Create a default events config from vocabulary")
     parser.add_argument("--vocab", help="Path to vocabulary CSV (for --create_events_config)")
     parser.add_argument("--output", help="Output path for events config (for --create_events_config)")
+    parser.add_argument("--top_n_tokens", type=int, default=40,
+                        help="Number of top tokens to plot in frequency comparison (default: 40)")
+    parser.add_argument("--skip_top_tokens", action="store_true",
+                        help="Skip the top N tokens frequency comparison plot")
     
     args = parser.parse_args()
     
@@ -600,8 +837,9 @@ Examples:
     os.makedirs(plots_dir, exist_ok=True)
     
     # Load events config
+    plot_settings = {}
     if events_config_path:
-        life_events = load_events_config(events_config_path)
+        life_events, plot_settings = load_events_config(events_config_path)
         logger.info(f"Loaded {len(life_events)} life events from config")
     else:
         logger.warning("No events config found - using empty config")
@@ -658,10 +896,49 @@ Examples:
         plot_all_events_comparison(events_data, plots_dir, n_generations, horizon, log_scale=True)
         plot_real_vs_simulated_scatter(events_data, plots_dir, n_generations, horizon)
     
+    # Plot top N most frequent tokens comparison
+    # Priority: command line args > events_config > run_config > defaults
+    top_n_tokens = 40
+    skip_top_tokens = False
+    
+    # From events config (plot_settings)
+    if plot_settings:
+        top_n_tokens = plot_settings.get('top_n_tokens', top_n_tokens)
+        skip_top_tokens = plot_settings.get('skip_top_tokens', skip_top_tokens)
+    
+    # From run config
+    if args.config:
+        top_n_tokens = config.get('top_n_tokens', top_n_tokens)
+        skip_top_tokens = config.get('skip_top_tokens', skip_top_tokens)
+    
+    # From command line args (highest priority)
+    if hasattr(args, 'top_n_tokens') and args.top_n_tokens is not None:
+        top_n_tokens = args.top_n_tokens
+    if hasattr(args, 'skip_top_tokens') and args.skip_top_tokens:
+        skip_top_tokens = args.skip_top_tokens
+    
+    if not skip_top_tokens:
+        logger.info(f"Generating top {top_n_tokens} tokens comparison plots...")
+        plot_top_n_tokens_comparison(
+            token_counts_df, plots_dir, n_generations, horizon,
+            top_n=top_n_tokens, log_scale=False
+        )
+        plot_top_n_tokens_comparison(
+            token_counts_df, plots_dir, n_generations, horizon,
+            top_n=top_n_tokens, log_scale=True
+        )
+        plot_top_n_tokens_scatter(
+            token_counts_df, plots_dir, n_generations, horizon,
+            top_n=top_n_tokens
+        )
+    else:
+        logger.info("Skipping top N tokens plots (--skip_top_tokens)")
+    
     logger.info("="*60)
     logger.info("Plotting Complete!")
     logger.info(f"  Output directory: {plots_dir}")
     logger.info(f"  Events plotted: {len(events_data)}")
+    logger.info(f"  Top tokens plotted: {top_n_tokens if not skip_top_tokens else 0}")
     logger.info(f"  Frequency unit: per million tokens")
     logger.info(f"  Parameters: n_generations={n_generations}, horizon={horizon}")
     logger.info("="*60)

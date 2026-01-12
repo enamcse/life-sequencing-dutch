@@ -634,6 +634,127 @@ This is just a warning. The extraction will proceed without ID verification.
 
 ---
 
+## Generative Evaluation SLURM Workflow
+
+The `scripts/` directory contains tools for generating and managing SLURM jobs for generative evaluation experiments.
+
+### Components
+
+| Script | Purpose |
+|--------|---------|
+| `generate_slurm.py` | Generate SLURM scripts for experiments |
+| `submit_jobs.sh` | Submit jobs with proper dependencies |
+| `check_progress.py` | Monitor job progress with table view |
+
+### Prefix Lengths
+
+By default, generation happens at positions: `[7, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]`
+
+- Position 7 is after demographic tokens: `[CLS] (gender, municipality, birth_year, birth_month) [SEP]`
+- Positions 100-1000 increment by 100 to cover the full sequence
+
+### GPU Assignment
+
+Jobs can be assigned to specific GPU indices to optimize resource utilization:
+
+```bash
+# Assign experiments to specific GPUs (experiment-wise assignment)
+python generate_slurm.py --config config.yaml --gpus 0,1,2
+
+# Jobs on the same GPU will run sequentially (SLURM dependencies)
+```
+
+#### GPU Assignment Modes
+
+**Model-wise (default)**: Each model gets assigned to a GPU index, cycling through available GPUs.
+
+**Experiment-wise (with --gpus)**: Each experiment gets assigned to a GPU index. All models for that experiment use the same GPU.
+
+### Config File Format
+
+```yaml
+models:
+  - Gen-medium
+  - Gen-BASE
+  - Gen-medium-bd
+  - Gen-BASE-bd-partial
+  - Gen-BASE-bd
+
+gpu_indices: "0,1,2,3"  # Optional: specify GPUs in config
+
+experiments:
+  - name: exp_n10_c100_h20_g100
+    n: 10      # Number of people
+    c: 100     # Number of generations per person
+    h: 20      # Horizon (tokens to generate)
+    g: 100     # Prefix gap
+    
+  - name: exp_n100_c100_h20_g100
+    n: 100
+    c: 100
+    h: 20
+    g: 100
+    
+  - name: exp_n1000_c100_h20_g100
+    n: 1000
+    c: 100
+    h: 20
+    g: 100
+    prefix_lengths: [7, 100, 200, 300, 400, 500]  # Override default
+```
+
+### Workflow Example
+
+```bash
+# 1. Generate SLURM scripts
+python scripts/generate_slurm.py --config experiments.yaml --gpus 0,1,2,3
+
+# 2. Submit jobs for an experiment
+bash scripts/submit_jobs.sh -e exp_n10_c100_h20_g100
+
+# 3. Check progress
+python scripts/check_progress.py
+```
+
+### Check Progress Features
+
+The `check_progress.py` script provides:
+
+- **Table View**: Models as rows, experiments as columns
+- **Status Symbols**: ✓ (complete), ⟳ (running), ⏳ (pending), ✗ (failed), - (not started)
+- **Timing Info**: Parse log files for start/end times and durations
+- **Summary Statistics**: Success/failure counts, average run times
+
+```bash
+# Show table for all experiments
+python check_progress.py
+
+# Filter by experiment or model
+python check_progress.py -e exp_n10_c100 -m Gen-medium Gen-BASE
+
+# Show detailed timing information
+python check_progress.py --detailed
+
+# Summary statistics only
+python check_progress.py --summary
+
+# Custom log directory
+python check_progress.py --log-dir /path/to/logs
+```
+
+### Sequential GPU Execution
+
+When submitting jobs, the script automatically:
+
+1. Reads GPU index from generated scripts
+2. Tracks the last job ID for each GPU
+3. Adds SLURM dependencies so jobs on the same GPU run sequentially
+4. Statistics jobs depend on their corresponding generation jobs
+
+This prevents GPU memory conflicts when running large models.
+
+---
+
 ## License
 
 Part of the pop2vec project for life-sequence modeling research.

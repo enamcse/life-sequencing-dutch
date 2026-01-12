@@ -10,6 +10,12 @@ output_base_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval
 slurm_output_dir: null  # Uses gen_eval/slurm_scripts by default
 log_dir: /projects/0/prjs1589/stonybrook/logs
 
+# =============================================================================
+# Plot Configuration (for plot_statistics.py)
+# =============================================================================
+top_n_tokens: 40        # Number of top tokens to plot in frequency comparison
+skip_top_tokens: false  # Set to true to skip top tokens plots
+
 # Models to evaluate (must be setup first via setup_model.py)
 models:
   - model_v1_gen_20251117
@@ -29,6 +35,7 @@ models:
 #   statistics: SLURM settings for statistics job
 #   pad_exclusion_mode: 'seq1', 'seq2', or 'both' (default: 'both')
 #   compute_by_age: true/false - compute statistics grouped by age decade (default: false)
+#   top_n_tokens: Number of top tokens to plot (default: 40)
 
 experiments:
   # Quick test experiment
