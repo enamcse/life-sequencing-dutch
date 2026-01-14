@@ -1,10 +1,26 @@
 # Dataset Token Statistics Configuration
 # 
-# This file specifies the paths to different datasets for token statistics analysis.
-# Empty paths or null values will be skipped.
+# This file specifies the paths to different datasets for token statistics analysis,
+# pretrained models for embedding extraction, and t-SNE visualization.
 #
 # Usage:
+#   # Run all layers (token stats, embeddings, t-SNE)
 #   python dataset_token_statistics.py --config datasets_config.yaml --output_dir ./stats_output
+#   
+#   # Run only token statistics (Layer 1)
+#   python dataset_token_statistics.py --config datasets_config.yaml --output_dir ./stats_output --only_token_stats
+#   
+#   # Run only model embeddings (Layer 2) - requires stats_file for export filtering
+#   python dataset_token_statistics.py --config datasets_config.yaml --output_dir ./stats_output \
+#       --only_embeddings --stats_file ./stats_output/D0_vocab_stats.csv
+#   
+#   # Run only t-SNE visualization (Layer 3) - requires embedding files to exist
+#   python dataset_token_statistics.py --config datasets_config.yaml --output_dir ./stats_output --only_tsne
+
+# =============================================================================
+# DATASETS SECTION
+# =============================================================================
+# Empty paths or null values will be skipped.
 
 datasets:
   # D0 dataset (original, smaller)
@@ -28,9 +44,103 @@ datasets:
   # D4 with birthday tokens
   D4_bd: ""
 
-# Example with actual paths (uncomment and adjust):
+# =============================================================================
+# MODELS SECTION
+# =============================================================================
+# List of pretrained models to extract embeddings from.
+# Each model requires:
+#   - name: Short identifier for the model (used in output filenames)
+#   - path: Directory containing the checkpoint and hparams files
+# Optional fields:
+#   - description: Human-readable description
+#   - checkpoint_file: Filename of checkpoint (default: model.ckpt)
+#   - hparams_file: Filename of hyperparameters (default: hparams.yaml)
+#   - embedding_key: Key in state_dict for embeddings 
+#                    (default: transformer.embedding.token.parametrizations.weight.original)
+#   - dataset: Dataset name (from datasets section) whose vocab to use
+#   - stats_file: Path to stats CSV for export filtering (n_people, n_observation)
+#
+# OUTPUT FILES (per model):
+#   - {model_name}_embeddings_pca.csv: PCA coordinates with stats (x, y, n_people, n_observation, exportable)
+#   - {model_name}_embeddings_tsne.csv: t-SNE coordinates (tsne_x, tsne_y)
+#   - {model_name}_tsne.png: t-SNE visualization plot
+#
+# TOKEN MATCHING:
+#   Tokens are matched by TOKEN name (not ID) across datasets to handle 
+#   different ID assignments between dataset versions.
+
+models: []
+
+# =============================================================================
+# EXAMPLES
+# =============================================================================
+# Uncomment and adjust the following examples:
+#
 # datasets:
 #   D0: /projects/0/prjs1589/stonybrook/fake_data_v0/step5
 #   D3_full_pop: /projects/0/prjs1589/stonybrook/data_v3/full_pop
 #   D4: /projects/0/prjs1589/stonybrook/data_v4
 #   D4_bd: /projects/0/prjs1589/stonybrook/data_v4_bd
+#
+# models:
+#   - name: base_model
+#     path: /projects/0/prjs1589/stonybrook/models/base
+#     description: "Baseline model trained on D0"
+#     dataset: D0
+#   
+#   - name: full_pop_model
+#     path: /projects/0/prjs1589/stonybrook/models/full_pop
+#     description: "Model trained on full population (D3)"
+#     checkpoint_file: best_model.ckpt
+#     dataset: D3_full_pop
+#     stats_file: /path/to/D3_full_pop_vocab_stats.csv  # for export filtering
+#   
+#   - name: birthday_model
+#     path: /projects/0/prjs1589/stonybrook/models/birthday
+#     description: "Model with birthday tokens (D4_bd)"
+#     dataset: D4_bd
+
+# =============================================================================
+# t-SNE PERPLEXITY GUIDE
+# =============================================================================
+# The perplexity parameter balances attention between local and global aspects
+# of the data. It loosely relates to the number of nearest neighbors considered.
+#
+# Recommended values based on vocabulary size:
+#   - Vocab size ~10,000-50,000:  perplexity 40-50
+#   - Vocab size ~5,000-10,000:   perplexity 30-50
+#   - Vocab size ~1,000-5,000:    perplexity 20-30
+#   - Vocab size ~500-1,000:      perplexity 10-20
+#   - Vocab size <500:            perplexity 5-10
+#
+# General guidance:
+#   - Low (5-15):   Focus on local structure, tight clusters, may miss global patterns
+#   - Medium (30):  Default, good balance of local and global structure
+#   - High (40-50): Focus on global structure, may blur local clusters
+#
+# IMPORTANT: Perplexity must be less than the number of samples (tokens).
+#            The script automatically adjusts if perplexity is too high.
+#
+# Specify via command line: --tsne_perplexity 30
+
+# =============================================================================
+# OUTPUT FILES
+# =============================================================================
+# The pipeline generates the following output files:
+#
+# Layer 1 - Token Statistics:
+#   {dataset}_vocab_stats.csv        - Enhanced vocab with n_people, n_observation
+#   {dataset}_metadata.json          - Processing metadata
+#
+# Layer 2 - Model Embeddings:
+#   {model}_embeddings_pca.csv       - PCA coordinates (x, y) with stats
+#   combined_embeddings_common_tokens.csv  - All models, common tokens only
+#   combined_embeddings_all_tokens.csv     - All models, all tokens
+#   {model}_unique_tokens.csv        - Tokens unique to each model
+#   token_mismatch_report.txt        - Detailed mismatch report
+#   token_id_mismatches.csv          - Tokens with different IDs across models
+#   token_presence_matrix.csv        - Which tokens exist in which models
+#
+# Layer 3 - t-SNE Visualization:
+#   {model}_tsne.png                 - t-SNE plot with exportable tokens highlighted
+#   {model}_embeddings_tsne.csv      - t-SNE coordinates (tsne_x, tsne_y)
