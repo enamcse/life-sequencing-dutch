@@ -767,15 +767,19 @@ class StatisticsComputer:
                 freq_rows.append(row)
         
         # =====================================================================
-        # Step 3: Combine and save
+        # Step 3: Combine and save (ONLY token frequency rows for by-age statistics)
+        # Note: Comparison rows (12 row_types) are only computed for block-wise statistics
+        # For decade-wise, we only use token frequencies
         # =====================================================================
-        all_rows = comparison_rows + freq_rows
+        # all_rows = comparison_rows + freq_rows  # OLD: included comparisons
+        all_rows = freq_rows  # NEW: only token frequencies for decade-wise
         
         logger.info("Building by-age DataFrame...")
         stats_df = pd.DataFrame(all_rows)
         
-        # Ensure column order: decade, row_type, token_id, token, p0_num, p0_den, ..., total_num, total_den
-        base_cols = ['decade', 'row_type', 'token_id', 'token']
+        # Since all rows are token_frequency, we drop the row_type column
+        # Ensure column order: decade, token_id, token, p0_num, p0_den, ..., total_num, total_den
+        base_cols = ['decade', 'token_id', 'token']  # Removed 'row_type'
         person_cols = []
         for i in range(n_people):
             person_cols.extend([f'p{i}_num', f'p{i}_den'])
@@ -788,12 +792,16 @@ class StatisticsComputer:
             if col not in stats_df.columns:
                 stats_df[col] = 0
         
+        # Drop row_type column if it exists (it's always 'token_frequency')
+        if 'row_type' in stats_df.columns:
+            stats_df = stats_df.drop(columns=['row_type'])
+        
         stats_df = stats_df[all_cols]
         
-        # Sort by decade order, then row_type
+        # Sort by decade order, then token_id
         decade_order = {bucket: i for i, bucket in enumerate(self.decade_buckets)}
         stats_df['_decade_order'] = stats_df['decade'].map(decade_order)
-        stats_df = stats_df.sort_values(['_decade_order', 'row_type', 'token_id']).drop(columns=['_decade_order'])
+        stats_df = stats_df.sort_values(['_decade_order', 'token_id']).drop(columns=['_decade_order'])
         
         # Determine output paths
         output_dir = self.config.output_dir
@@ -818,6 +826,7 @@ class StatisticsComputer:
         full_file_size = os.path.getsize(by_age_full_path) / (1024 * 1024)
         
         # Create and save summary CSV (without per-person columns)
+        # base_cols already excludes row_type since all rows are token_frequency
         summary_cols = base_cols + total_cols
         summary_df = stats_df[summary_cols].copy()
         summary_df['rate'] = summary_df['total_num'] / summary_df['total_den'].replace(0, np.nan)
@@ -827,18 +836,15 @@ class StatisticsComputer:
         
         summary_file_size = os.path.getsize(by_age_summary_path) / (1024 * 1024)
         
-        # Log summary
-        n_comparison_rows = len(comparison_rows)
+        # Log summary (updated to reflect only token frequencies)
         n_freq_rows = len(freq_rows)
         
         logger.info(f"By-Age Statistics Complete!")
         logger.info(f"  Full output: {by_age_full_path} ({full_file_size:.1f} MB)")
-        logger.info(f"    Columns: {len(stats_df.columns)} ({n_people} people × 2 + 6)")
-        logger.info(f"    Rows per decade: {12 + len(top_tokens)} (12 comparisons + {len(top_tokens)} tokens)")
+        logger.info(f"    Columns: {len(stats_df.columns)} ({n_people} people × 2 + 5)")
+        logger.info(f"    Note: row_type column dropped (all values = 'token_frequency')")
         logger.info(f"  Summary output: {by_age_summary_path} ({summary_file_size:.1f} MB)")
-        logger.info(f"  Total rows: {len(all_rows)} ({len(self.decade_buckets)} decades)")
-        logger.info(f"    - Comparison rows: {n_comparison_rows} ({len(self.decade_buckets)} decades × 12)")
-        logger.info(f"    - Token frequency rows: {n_freq_rows} ({len(self.decade_buckets)} decades × {len(top_tokens)} tokens)")
+        logger.info(f"  Total rows: {len(all_rows)} ({len(self.decade_buckets)} decades × {len(top_tokens)} tokens)")
         
         # =====================================================================
         # Step 4: Token Counts Spreadsheet with N_d and Real/Simulated Counts

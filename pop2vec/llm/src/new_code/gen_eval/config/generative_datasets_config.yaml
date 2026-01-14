@@ -1,0 +1,100 @@
+# Generative Datasets Configuration
+#
+# Defines the 5 age-stratified datasets (GD0-GD4) for generative evaluation.
+# Each dataset selects people based on age criteria at specific positions.
+# GDB0-GDB4 are the corresponding birthday-token versions (same indices, different H5).
+#
+# Usage:
+#   python create_generative_datasets.py --config generative_datasets_config.yaml
+
+# Source H5 files
+source_h5:
+  # Primary H5 file (normal tokens) - criteria applied here
+  primary: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/encoding=nomlm/encoded.h5
+  
+  # Secondary H5 file (birthday tokens) - same indices extracted, no criteria
+  # Leave empty/null if not using paired extraction
+  birthday: null  # e.g., /path/to/birthday_encoded.h5
+
+# Output directory for generated datasets
+output_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets
+
+# Common extraction parameters
+extraction:
+  n_sequences: 10000     # Sequences per dataset (n people)
+  n_workers: 16          # Parallel workers for extraction
+  seed: 42               # Random seed for reproducibility
+  chunk_size: 100000     # Chunk size for parallel processing
+
+# Dataset definitions
+# Each dataset has position-based age criteria
+# GDB versions use same indices from birthday H5 file
+datasets:
+  # GD0: Childhood/Young (age 1-30 at position 1000)
+  GD0:
+    description: "Childhood and young adult sequences (ends at age 1-30)"
+    position_age_criteria:
+      - position: 6
+        age_min: 0
+        age_max: 120    # No upper limit at start
+        label: "start"
+      - position: 1000
+        age_min: 1      # Exclude age 0 (which could be PAD)
+        age_max: 30
+        label: "young_adult"
+
+  # GD1: Middle-age (age 30-49 at position 1000)
+  GD1:
+    description: "Middle-age sequences (ends at age 30-49)"
+    position_age_criteria:
+      - position: 6
+        age_min: 0
+        age_max: 120
+        label: "start"
+      - position: 1000
+        age_min: 30
+        age_max: 49
+        label: "middle_age"
+
+  # GD2: Late middle-age (age 50-69 at position 1000)
+  GD2:
+    description: "Late middle-age sequences (ends at age 50-69)"
+    position_age_criteria:
+      - position: 6
+        age_min: 0
+        age_max: 120
+        label: "start"
+      - position: 1000
+        age_min: 50
+        age_max: 69
+        label: "late_middle_age"
+
+  # GD3: Old age (age 70-99 at position 1000)
+  GD3:
+    description: "Old age sequences (ends at age 70-99)"
+    position_age_criteria:
+      - position: 6
+        age_min: 0
+        age_max: 120
+        label: "start"
+      - position: 1000
+        age_min: 70
+        age_max: 99
+        label: "old_age"
+
+  # GD4: Mixed sampling (composite dataset)
+  # This dataset requires special handling - proportional sampling from GD0-GD3 + death sequences
+  GD4:
+    description: "Mixed dataset: 20% 0-29, 25% 30-49, 25% 50-69, 20% 70-99, 10% with death"
+    is_mixed: true
+    sampling_proportions:
+      age_0_29: 0.20     # From people ending age 0-29 (use 1-29 for extraction)
+      age_30_49: 0.25    # From people ending age 30-49
+      age_50_69: 0.25    # From people ending age 50-69
+      age_70_99: 0.20    # From people ending age 70-99
+      with_death: 0.10   # Must have death token in sequence
+    # For death detection, we need the death token ID
+    death_token: "[death]_[death]"
+
+# Vocab file for token lookup (death token ID, PAD token ID)
+vocab_path: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv

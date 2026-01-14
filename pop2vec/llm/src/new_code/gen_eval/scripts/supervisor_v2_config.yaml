@@ -1,0 +1,123 @@
+# Supervisor v2 Configuration
+#
+# Enhanced supervisor with runtime GPU updates, priority system, and result aggregation.
+#
+# Usage:
+#   sbatch supervisor_v2.slurm
+#   # or
+#   python supervisor_v2.py --config supervisor_v2_config.yaml
+#
+# Runtime Updates:
+#   - Edit supervisor_state/gpu_config.yaml to add/remove GPUs
+#   - Edit supervisor_state/priorities.yaml to change job priorities
+#   - Changes are detected automatically every poll interval
+
+# ============================================================================
+# Models
+# ============================================================================
+# List of model names to evaluate
+models:
+  - Gen-medium
+  - Gen-BASE
+  - Gen-medium-bd
+  - Gen-BASE-bd
+  - Gen-BASE-bd-partial
+
+# ============================================================================
+# Datasets
+# ============================================================================
+# Generative datasets (GD0-GD4 for normal, GDB0-GDB4 for birthday-token)
+# The dataset paths should be configured in generative_datasets_config.yaml
+datasets:
+  - GD0   # Childhood/Young (age 1-30 at position 1000)
+  - GD1   # Middle-age (age 30-49)
+  - GD2   # Late middle-age (age 50-69)
+  - GD3   # Old age (age 70-99)
+  - GD4   # Mixed sampling
+  # Birthday-token versions (same indices, different H5)
+  # - GDB0
+  # - GDB1
+  # - GDB2
+  # - GDB3
+  # - GDB4
+
+# ============================================================================
+# GPU Configuration
+# ============================================================================
+# Define available GPUs per node
+# This can be overridden at runtime by editing supervisor_state/gpu_config.yaml
+gpus:
+  ossc9424vm1:
+    - 0
+    - 1
+    - 2
+    - 3
+  # ossc9424vm2:
+  #   - 0
+  #   - 1
+  #   - 2
+  #   - 3
+
+# ============================================================================
+# Priority Configuration
+# ============================================================================
+# Controls which experiments are generated and in what order.
+#
+# Priority levels (1 = highest priority, 10 = lowest):
+#   1: Base (t=0.8, k=20, h=20, g=100) - 25 experiments
+#   2: +k=1 → 50 experiments
+#   3: +k=v (vocab size) → 75 experiments
+#   4: +t=0.1 → 150 experiments
+#   5: +t=1.0 → 225 experiments
+#   6: +k=10 → 300 experiments
+#   7: +t=0.3 → 400 experiments
+#   8: +k=5 → 500 experiments
+#   9: +h=10 → 1000 experiments
+#   10: +g=50 → 2000 experiments
+#
+# Set max_priority_level to control how many experiments to generate.
+# Set min_priority to skip low-priority jobs.
+
+priority:
+  # Fixed parameters for all experiments
+  n: 100                    # num_people
+  c: 100                    # num_generations
+  
+  # Maximum priority level to include (1-10)
+  # 1 = only base experiments (25)
+  # 10 = all experiments (2000)
+  max_priority_level: 5     # Include up to +t=1.0 (225 experiments)
+  
+  # Minimum priority to submit (jobs below this are skipped)
+  # Higher number = stricter filter
+  min_priority: 990         # Only submit priority >= 990 (levels 1-10)
+
+# ============================================================================
+# Supervisor Behavior
+# ============================================================================
+
+# How often to check job status (seconds)
+poll_interval_seconds: 60
+
+# Automatically submit statistics jobs when generation completes
+auto_submit_stats: true
+
+# Automatically resubmit failed jobs
+auto_resubmit_failed: false
+
+# Maximum retry attempts for failed jobs
+max_retries: 2
+
+# Automatically aggregate results to CSVs
+auto_aggregate: true
+
+# ============================================================================
+# Paths (usually don't need to change)
+# ============================================================================
+
+# Uncomment to override defaults:
+# slurm_dir: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/slurm_scripts
+# output_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval
+# log_dir: /projects/0/prjs1589/stonybrook/logs
+# state_dir: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/supervisor_state
+# export_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/exports

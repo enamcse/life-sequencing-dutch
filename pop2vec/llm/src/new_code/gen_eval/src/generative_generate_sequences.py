@@ -533,12 +533,17 @@ class SequenceGenerator:
                 prefixes, masks, h, batch_size=generation_batch_size
             )
             
-            # Store results
+            # Store results - pad all sequences to exactly horizon length
             for i, (gen_tokens, meta) in enumerate(zip(generated_sequences, task_metadata)):
+                # Pad to horizon length if shorter (e.g., if DEATH token was generated)
+                if len(gen_tokens) < h:
+                    pad_needed = h - len(gen_tokens)
+                    gen_tokens = gen_tokens + [self.pad_id] * pad_needed
+                
                 records.append({
                     **meta,
                     'generated_tokens': ','.join(map(str, gen_tokens)),
-                    'generated_len': len(gen_tokens),
+                    'generated_len': len(gen_tokens),  # Always h after padding
                 })
         
         logger.info(f"Generated {len(records)} records")
