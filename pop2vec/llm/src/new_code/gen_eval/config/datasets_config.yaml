@@ -1,0 +1,36 @@
+# Dataset Token Statistics Configuration
+# 
+# This file specifies the paths to different datasets for token statistics analysis.
+# Empty paths or null values will be skipped.
+#
+# Usage:
+#   python dataset_token_statistics.py --config datasets_config.yaml --output_dir ./stats_output
+
+datasets:
+  # D0 dataset (original, smaller)
+  D0: ""  # e.g., /projects/0/prjs1589/stonybrook/fake_data_v0/step5
+  
+  # D1 dataset
+  D1: ""
+  
+  # D2 dataset
+  D2: ""
+  
+  # D3 with parent/sibling relations
+  D3_parent_sibling: ""
+  
+  # D3 full population
+  D3_full_pop: ""
+  
+  # D4 dataset
+  D4: ""
+  
+  # D4 with birthday tokens
+  D4_bd: ""
+
+# Example with actual paths (uncomment and adjust):
+# datasets:
+#   D0: /projects/0/prjs1589/stonybrook/fake_data_v0/step5
+#   D3_full_pop: /projects/0/prjs1589/stonybrook/data_v3/full_pop
+#   D4: /projects/0/prjs1589/stonybrook/data_v4
+#   D4_bd: /projects/0/prjs1589/stonybrook/data_v4_bd
