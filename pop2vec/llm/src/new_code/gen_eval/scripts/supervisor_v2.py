@@ -983,9 +983,14 @@ class SupervisorV2:
         self.gpu_slots = self._build_gpu_slots()
         
         logging.info(f"[SUPERVISOR V2] Initialized")
-        logging.info(f"  Config: {self.config_path}")
-        logging.info(f"  Registry: {self.registry_path}")
+        logging.info(f"  Config File: {self.config_path}")
+        logging.info(f"  State Dir: {self.state_dir}")
+        logging.info(f"  Output Dir: {self.output_dir}")
         logging.info(f"  Config Dir: {self.config_dir}")
+        logging.info(f"  Log Dir: {self.log_dir}")
+        logging.info(f"  Registry: {self.registry_path}")
+        logging.info(f"  GPU Config: {self.gpu_config_file}")
+        logging.info(f"  Dashboard: {self.dashboard_file}")
         logging.info(f"  Experiments: {len(self.state.experiments)}")
         logging.info(f"  GPU Slots: {len(self.gpu_slots)}")
     
@@ -1046,7 +1051,32 @@ class SupervisorV2:
                 logging.warning(f"[GPU] Error loading runtime GPU config: {e}")
         
         # Fall back to main config
-        return self.config.get('gpus', {})
+        gpus = self.config.get('gpus', {})
+        
+        # Create runtime GPU config file for easy editing
+        self._create_initial_gpu_config(gpus)
+        
+        return gpus
+    
+    def _create_initial_gpu_config(self, gpus: Dict[str, List[int]]):
+        """Create initial runtime GPU config file from main config."""
+        try:
+            content = [
+                "# Runtime GPU Configuration",
+                "# Edit this file to add/remove GPUs while supervisor is running",
+                "# Changes are detected automatically every poll interval",
+                "",
+                "gpus:",
+            ]
+            for node, indices in sorted(gpus.items()):
+                content.append(f"  {node}:")
+                for idx in sorted(indices):
+                    content.append(f"    - {idx}")
+            
+            self.gpu_config_file.write_text('\n'.join(content) + '\n')
+            logging.info(f"[GPU] Created runtime GPU config: {self.gpu_config_file}")
+        except Exception as e:
+            logging.warning(f"[GPU] Could not create runtime GPU config: {e}")
     
     def _build_gpu_slots(self) -> List[str]:
         """Build list of GPU slots from config."""

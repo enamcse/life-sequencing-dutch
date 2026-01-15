@@ -56,28 +56,15 @@ if [[ ! -f "supervisor_v2_config.yaml" ]]; then
     exit 1
 fi
 
-# Create initial GPU config for runtime updates
-STATE_DIR="$SCRIPT_DIR/../supervisor_state"
-mkdir -p "$STATE_DIR"
-
-if [[ ! -f "$STATE_DIR/gpu_config.yaml" ]]; then
-    echo "Creating initial GPU config file..."
-    echo "# Runtime GPU Configuration" > "$STATE_DIR/gpu_config.yaml"
-    echo "# Edit this file to add/remove GPUs while supervisor is running" >> "$STATE_DIR/gpu_config.yaml"
-    echo "# Changes are detected automatically every poll interval" >> "$STATE_DIR/gpu_config.yaml"
-    echo "" >> "$STATE_DIR/gpu_config.yaml"
-    echo "gpus:" >> "$STATE_DIR/gpu_config.yaml"
-    echo "  ossc9424vm1:" >> "$STATE_DIR/gpu_config.yaml"
-    echo "    - 0" >> "$STATE_DIR/gpu_config.yaml"
-    echo "    - 1" >> "$STATE_DIR/gpu_config.yaml"
-    echo "    - 2" >> "$STATE_DIR/gpu_config.yaml"
-    echo "    - 3" >> "$STATE_DIR/gpu_config.yaml"
-fi
+# Note: The Python supervisor will create gpu_config.yaml in the state_dir
+# specified in supervisor_v2_config.yaml. Do NOT create it here as it would
+# go to the default location, not the configured one.
 
 echo ""
-echo "Runtime Configuration Files:"
-echo "  GPU Config: $STATE_DIR/gpu_config.yaml"
-echo "  Dashboard:  $STATE_DIR/dashboard_v2.txt"
+echo "Configuration loaded from: $SCRIPT_DIR/supervisor_v2_config.yaml"
+echo "State directory will be read from config file (state_dir setting)"
+echo ""
+echo "=========================================="
 echo ""
 echo "To modify GPUs at runtime, edit: $STATE_DIR/gpu_config.yaml"
 echo ""
