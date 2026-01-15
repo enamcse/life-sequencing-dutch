@@ -127,8 +127,13 @@ class ExperimentParams:
     g: int = 100           # gap (prefix_gap)
     k: int = 20            # top_k (use -1 for vocab size)
     t: float = 0.8         # temperature
-    model: str = ""        # model name
-    dataset:
+    model: str = ""        # model name (original, with hyphens)
+    dataset: str = ""      # dataset name (GD0, GD1, etc.)
+    
+    @property
+    def model_clean(self) -> str:
+        """Get cleaned model name (for experiment naming)."""
+        return re.sub(r'[^a-zA-Z0-9]', '', self.model)
     
     @property
     def experiment_name(self) -> str:
@@ -137,22 +142,32 @@ class ExperimentParams:
         k_str = "v" if self.k == -1 else str(self.k)
         # Replace dots in temperature
         t_str = str(self.t).replace(".", "")
-        # Clean model name (remove special chars)
-        model_clean = re.sub(r'[^a-zA-Z0-9]', '', self.model)
         
-        return f"exp_n{self.n}_c{self.c}_h{self.h}_g{self.g}_k{k_str}_t{t_str}_{model_clean}_{self.dataset}"
+        return f"exp_n{self.n}_c{self.c}_h{self.h}_g{self.g}_k{k_str}_t{t_str}_{self.model_clean}_{self.dataset}"
     
     @classmethod
-    def from_name(cls, name: str) -> 'ExperimentParams':
-        """Parse experiment name back to params."""
+    def from_name(cls, name: str, model_mapping: Dict[str, str] = None) -> 'ExperimentParams':
+        """
+        Parse experiment name back to params.
+        
+        Args:
+            name: Experiment name string
+            model_mapping: Optional dict mapping cleaned model names to original names
+                          e.g., {'Genmedium': 'Gen-medium', 'GenBASE': 'Gen-BASE'}
+        """
         pattern = r'exp_n(\d+)_c(\d+)_h(\d+)_g(\d+)_k(\w+)_t(\d+)_([^_]+)_(\w+)'
         match = re.match(pattern, name)
         if not match:
             raise ValueError(f"Cannot parse experiment name: {name}")
         
-        n, c, h, g, k_str, t_str, model, dataset = match.groups()
+        n, c, h, g, k_str, t_str, model_clean, dataset = match.groups()
         k = -1 if k_str == 'v' else int(k_str)
         t = float(t_str[0] + '.' + t_str[1:]) if len(t_str) > 1 else float(t_str)
+        
+        # Restore original model name if mapping provided
+        model = model_clean
+        if model_mapping and model_clean in model_mapping:
+            model = model_mapping[model_clean]
         
         return cls(
             n=int(n), c=int(c), h=int(h), g=int(g),
@@ -734,6 +749,21 @@ def validate_registry(registry: Dict, models: List[str], datasets: List[str]) ->
     return errors
 
 
+def build_model_name_mapping(models: List[str]) -> Dict[str, str]:
+    """
+    Build a mapping from cleaned model names to original model names.
+    
+    Example:
+        {'Genmedium': 'Gen-medium', 'GenBASE': 'Gen-BASE', 'GenBASEbd': 'Gen-BASE-bd'}
+    """
+    mapping = {}
+    for model in models:
+        # Clean the model name the same way as ExperimentParams.model_clean
+        model_clean = re.sub(r'[^a-zA-Z0-9]', '', model)
+        mapping[model_clean] = model
+    return mapping
+
+
 def get_compatible_datasets(model: str, registry: Dict, all_datasets: List[str]) -> List[str]:
     """Get datasets compatible with a model according to registry."""
     compatibility = registry.get('model_dataset_compatibility', {})
@@ -930,6 +960,10 @@ class SupervisorV2:
         # Load config
         self.config = self._load_config()
         self.config_mtime = self.config_path.stat().st_mtime
+        
+        # Build model name mapping (cleaned -> original)
+        # e.g., {'Genmedium': 'Gen-medium', 'GenBASE': 'Gen-BASE'}
+        self.model_mapping = build_model_name_mapping(self.config.get('models', []))
         
         # Load registry for dataset/model paths
         self.registry = load_registry(self.registry_path)
@@ -1184,7 +1218,7 @@ class SupervisorV2:
                 continue
             
             try:
-                exp = ExperimentParams.from_name(job.experiment)
+                exp = ExperimentParams.from_name(job.experiment, self.model_mapping)
                 
                 # Generate per-experiment config using registry
                 try:
@@ -1245,7 +1279,7 @@ class SupervisorV2:
             script_path = self.slurm_dir / f"stats_{job.experiment}.sh"
             if not script_path.exists():
                 try:
-                    exp = ExperimentParams.from_name(job.experiment)
+                    exp = ExperimentParams.from_name(job.experiment, self.model_mapping)
                     script_path = generate_slurm_script(
                         exp, 'stats', job.job_number,
                         self.slurm_dir, self.output_dir,
