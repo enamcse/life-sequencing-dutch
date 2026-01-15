@@ -406,8 +406,11 @@ def create_simple_dataset(
     
     # Extract birthday version if available
     n_birthday = 0
+    output_birthday = None
     if source_h5_birthday:
-        output_birthday = os.path.join(output_dir, f"{dataset_name}B", f"{dataset_name}B.h5")
+        # Naming convention: GD0 -> GDB0, GD1 -> GDB1, etc.
+        birthday_name = f"GDB{dataset_name[2:]}"  # GD0 -> GDB0
+        output_birthday = os.path.join(output_dir, birthday_name, f"{birthday_name}.h5")
         n_birthday = extract_to_h5(source_h5_birthday, output_birthday, selected_indices)
     
     # Save indices for reproducibility
@@ -540,8 +543,10 @@ def create_mixed_dataset(
     
     # Extract birthday version if available
     n_birthday = 0
+    output_birthday = None
     if source_h5_birthday:
-        output_birthday = os.path.join(output_dir, "GD4B", "GD4B.h5")
+        # Naming convention: GD4 -> GDB4
+        output_birthday = os.path.join(output_dir, "GDB4", "GDB4.h5")
         n_birthday = extract_to_h5(source_h5_birthday, output_birthday, selected_indices)
     
     # Save indices

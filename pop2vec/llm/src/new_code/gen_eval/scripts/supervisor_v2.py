@@ -63,6 +63,8 @@ DEFAULT_OUTPUT_DIR = Path("/projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval"
 DEFAULT_LOG_DIR = Path("/projects/0/prjs1589/stonybrook/logs")
 DEFAULT_STATE_DIR = Path(__file__).parent.parent / "supervisor_state"
 DEFAULT_EXPORT_DIR = Path("/projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/exports")
+DEFAULT_REGISTRY_PATH = Path(__file__).parent.parent / "config" / "registry.yaml"
+DEFAULT_CONFIG_DIR = Path("/projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/configs")
 
 
 class JobStatus(Enum):
@@ -126,7 +128,7 @@ class ExperimentParams:
     k: int = 20            # top_k (use -1 for vocab size)
     t: float = 0.8         # temperature
     model: str = ""        # model name
-    dataset: str = ""      # dataset name (GD0, GD1, etc.)
+    dataset:
     
     @property
     def experiment_name(self) -> str:
@@ -507,7 +509,7 @@ cd ~/life-sequencing-dutch/
 source requirements/load_venv.sh
 
 # Run generation
-python -m pop2vec.llm.src.new_code.gen_eval.src.generate_sequences \\
+python -m pop2vec.llm.src.new_code.gen_eval.src.generative_generate_sequences \\
     --config {config_dir}/{exp.experiment_name}/run_config.yaml
 
 echo ""
@@ -545,7 +547,7 @@ echo ""
 echo "=========================================="
 echo "Step 1/2: Computing Statistics"
 echo "=========================================="
-python -m pop2vec.llm.src.new_code.gen_eval.src.compute_statistics \\
+python -m pop2vec.llm.src.new_code.gen_eval.src.generative_compute_statistics \\
     --config {config_dir}/{exp.experiment_name}/run_config.yaml
 
 STATS_EXIT_CODE=$?
@@ -598,6 +600,147 @@ def patch_script_for_gpu(script_path: Path, node: str, gpu_index: int) -> Path:
     patched_path.chmod(0o755)
     
     return patched_path
+
+
+# ============================================================================
+# Registry and Config Generation
+# ============================================================================
+
+def load_registry(registry_path: Path = None) -> Dict:
+    """
+    Load the dataset/model registry.
+    
+    The registry maps:
+    - Dataset names (GD0, GDB0, etc.) -> H5 file paths
+    - Model names (Gen-BASE, etc.) -> checkpoint path, vocab path
+    - Model-dataset compatibility matrix
+    """
+    if registry_path is None:
+        registry_path = DEFAULT_REGISTRY_PATH
+    
+    registry_path = Path(registry_path)
+    
+    if not registry_path.exists():
+        logging.warning(f"[REGISTRY] Registry file not found: {registry_path}")
+        return {'datasets': {}, 'models': {}, 'model_dataset_compatibility': {}}
+    
+    with open(registry_path, 'r') as f:
+        registry = yaml.safe_load(f)
+    
+    logging.info(f"[REGISTRY] Loaded: {len(registry.get('datasets', {}))} datasets, "
+                 f"{len(registry.get('models', {}))} models")
+    
+    return registry
+
+
+def generate_experiment_config(
+    exp: 'ExperimentParams',
+    registry: Dict,
+    config_dir: Path,
+    output_dir: Path,
+) -> Path:
+    """
+    Generate a per-experiment run_config.yaml file using the registry.
+    
+    Raises ValueError if dataset or model not found in registry, or paths are null.
+    """
+    exp_name = exp.experiment_name
+    exp_config_dir = config_dir / exp_name
+    exp_config_dir.mkdir(parents=True, exist_ok=True)
+    
+    config_path = exp_config_dir / "run_config.yaml"
+    
+    # Skip if config already exists
+    if config_path.exists():
+        return config_path
+    
+    # Look up dataset path
+    datasets = registry.get('datasets', {})
+    dataset_path = datasets.get(exp.dataset)
+    if not dataset_path:
+        raise ValueError(f"Dataset '{exp.dataset}' not found or null in registry")
+    
+    # Look up model info
+    models = registry.get('models', {})
+    model_info = models.get(exp.model)
+    if not model_info:
+        raise ValueError(f"Model '{exp.model}' not found in registry")
+    
+    checkpoint_path = model_info.get('checkpoint')
+    if not checkpoint_path:
+        raise ValueError(f"Checkpoint for '{exp.model}' is null in registry")
+    
+    vocab_path = model_info.get('vocab', registry.get('default_vocab'))
+    
+    # Experiment output directory
+    exp_output_dir = output_dir / exp_name
+    
+    # Build config
+    config = {
+        'experiment_name': exp_name,
+        'model_name': exp.model,
+        'checkpoint_path': checkpoint_path,
+        'vocab_path': vocab_path,
+        'data_path': dataset_path,
+        'output_dir': str(exp_output_dir),
+        'num_people': exp.n,
+        'num_generations': exp.c,
+        'horizon': exp.h,
+        'prefix_gap': exp.g,
+        'top_k': exp.k if exp.k > 0 else None,
+        'temperature': exp.t,
+        'generation_batch_size': 64,
+        'seed': 42,
+        'sequences_path': str(exp_output_dir / 'generated_sequences.parquet'),
+        'original_sequences_path': str(exp_output_dir / 'original_sequences.parquet'),
+        'ages_path': str(exp_output_dir / 'ages.parquet'),
+        'compute_by_age': True,
+        'exclude_padding': False,
+        'prefix_lengths': [7, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
+        'statistics_path': str(exp_output_dir / f'statistics_n{exp.n}_c{exp.c}_full.csv'),
+        'statistics_summary_path': str(exp_output_dir / f'statistics_n{exp.n}_c{exp.c}_summary.csv'),
+        'statistics_by_age_path': str(exp_output_dir / f'statistics_by_age_n{exp.n}_c{exp.c}_full.csv'),
+        'statistics_by_age_summary_path': str(exp_output_dir / f'statistics_by_age_n{exp.n}_c{exp.c}_summary.csv'),
+        'generation': {'partition': 'gpu_h100', 'gpus': 1, 'cpus': 4, 'mem': '64G', 'time': '48:00:00'},
+        'statistics': {'partition': 'thin', 'cpus': 8, 'mem': '32G', 'time': '12:00:00'},
+    }
+    
+    if exp.k == -1:
+        config['use_full_vocab'] = True
+    
+    with open(config_path, 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=True)
+    
+    logging.info(f"[CONFIG] Generated: {config_path}")
+    return config_path
+
+
+def validate_registry(registry: Dict, models: List[str], datasets: List[str]) -> List[str]:
+    """Validate that all required models and datasets have valid paths in registry."""
+    errors = []
+    
+    reg_datasets = registry.get('datasets', {})
+    for ds in datasets:
+        if ds not in reg_datasets or not reg_datasets[ds]:
+            errors.append(f"Dataset '{ds}' missing or null in registry")
+    
+    reg_models = registry.get('models', {})
+    for model in models:
+        if model not in reg_models or not reg_models[model]:
+            errors.append(f"Model '{model}' missing or null in registry")
+        elif not reg_models[model].get('checkpoint'):
+            errors.append(f"Model '{model}' checkpoint is null in registry")
+    
+    return errors
+
+
+def get_compatible_datasets(model: str, registry: Dict, all_datasets: List[str]) -> List[str]:
+    """Get datasets compatible with a model according to registry."""
+    compatibility = registry.get('model_dataset_compatibility', {})
+    if not compatibility:
+        return all_datasets
+    compatible = compatibility.get(model, all_datasets)
+    return [ds for ds in compatible if ds in all_datasets]
 
 
 def submit_job(script_path: str, node: str = None, gpu_index: int = None) -> Optional[str]:
@@ -764,6 +907,8 @@ class SupervisorV2:
         log_dir: Path,
         state_dir: Path,
         export_dir: Path,
+        config_dir: Path = None,
+        registry_path: Path = None,
     ):
         self.config_path = Path(config_path)
         self.slurm_dir = Path(slurm_dir)
@@ -771,10 +916,13 @@ class SupervisorV2:
         self.log_dir = Path(log_dir)
         self.state_dir = Path(state_dir)
         self.export_dir = Path(export_dir)
+        self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
+        self.registry_path = Path(registry_path) if registry_path else DEFAULT_REGISTRY_PATH
         
         # Create directories
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.slurm_dir.mkdir(parents=True, exist_ok=True)
+        self.config_dir.mkdir(parents=True, exist_ok=True)
         
         # Backup supervisor script
         self._backup_self()
@@ -782,6 +930,10 @@ class SupervisorV2:
         # Load config
         self.config = self._load_config()
         self.config_mtime = self.config_path.stat().st_mtime
+        
+        # Load registry for dataset/model paths
+        self.registry = load_registry(self.registry_path)
+        self._validate_registry_on_startup()
         
         # State files
         self.state_file = self.state_dir / "pipeline_state_v2.json"
@@ -798,8 +950,22 @@ class SupervisorV2:
         
         logging.info(f"[SUPERVISOR V2] Initialized")
         logging.info(f"  Config: {self.config_path}")
+        logging.info(f"  Registry: {self.registry_path}")
+        logging.info(f"  Config Dir: {self.config_dir}")
         logging.info(f"  Experiments: {len(self.state.experiments)}")
         logging.info(f"  GPU Slots: {len(self.gpu_slots)}")
+    
+    def _validate_registry_on_startup(self):
+        """Validate registry has paths for all configured models and datasets."""
+        models = self.config.get('models', [])
+        datasets = self.config.get('datasets', [])
+        
+        errors = validate_registry(self.registry, models, datasets)
+        if errors:
+            logging.warning("[REGISTRY] Validation warnings:")
+            for err in errors:
+                logging.warning(f"  - {err}")
+            logging.warning("  Fill in paths in registry.yaml before jobs can run")
     
     def _backup_self(self):
         """Create a backup of the supervisor script."""
@@ -1002,6 +1168,10 @@ class SupervisorV2:
         # Sort by priority (descending)
         pending_jobs.sort(key=lambda j: j.priority, reverse=True)
         
+        # Check min_priority from priority config (not top-level config)
+        priority_config = self.config.get('priority', {})
+        min_priority = priority_config.get('min_priority', 0)
+        
         # Submit jobs
         for slot in available_slots:
             if not pending_jobs:
@@ -1010,23 +1180,32 @@ class SupervisorV2:
             job = pending_jobs.pop(0)
             
             # Check priority threshold
-            min_priority = self.config.get('min_priority', 0)
             if job.priority < min_priority:
                 continue
             
-            # Get or generate script
-            script_path = self.slurm_dir / f"gen_{job.experiment}.sh"
-            if not script_path.exists():
+            try:
+                exp = ExperimentParams.from_name(job.experiment)
+                
+                # Generate per-experiment config using registry
                 try:
-                    exp = ExperimentParams.from_name(job.experiment)
+                    generate_experiment_config(
+                        exp, self.registry, self.config_dir, self.output_dir
+                    )
+                except ValueError as e:
+                    logging.error(f"[CONFIG] Cannot generate config for {job.experiment}: {e}")
+                    continue
+                
+                # Get or generate SLURM script
+                script_path = self.slurm_dir / f"gen_{job.experiment}.sh"
+                if not script_path.exists():
                     script_path = generate_slurm_script(
                         exp, 'gen', job.job_number,
                         self.slurm_dir, self.output_dir,
-                        self.output_dir.parent / 'configs', self.log_dir
+                        self.config_dir, self.log_dir
                     )
-                except Exception as e:
-                    logging.error(f"Cannot generate script for {job.experiment}: {e}")
-                    continue
+            except Exception as e:
+                logging.error(f"Cannot setup job {job.experiment}: {e}")
+                continue
             
             # Parse slot
             node, gpu_idx = slot.split(':')
@@ -1062,7 +1241,7 @@ class SupervisorV2:
             if not gen_job or gen_job.status != JobStatus.COMPLETED:
                 continue
             
-            # Get or generate script
+            # Get or generate script (config should already exist from generation)
             script_path = self.slurm_dir / f"stats_{job.experiment}.sh"
             if not script_path.exists():
                 try:
@@ -1070,7 +1249,7 @@ class SupervisorV2:
                     script_path = generate_slurm_script(
                         exp, 'stats', job.job_number,
                         self.slurm_dir, self.output_dir,
-                        self.output_dir.parent / 'configs', self.log_dir
+                        self.config_dir, self.log_dir
                     )
                 except Exception as e:
                     logging.error(f"Cannot generate stats script for {job.experiment}: {e}")
@@ -1265,22 +1444,40 @@ Examples:
     )
     
     parser.add_argument("--config", required=True, help="Path to config YAML")
-    parser.add_argument("--slurm-dir", type=str, default=str(DEFAULT_SLURM_DIR))
-    parser.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
-    parser.add_argument("--log-dir", type=str, default=str(DEFAULT_LOG_DIR))
-    parser.add_argument("--state-dir", type=str, default=str(DEFAULT_STATE_DIR))
-    parser.add_argument("--export-dir", type=str, default=str(DEFAULT_EXPORT_DIR))
+    parser.add_argument("--slurm-dir", type=str, default=None)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--log-dir", type=str, default=None)
+    parser.add_argument("--state-dir", type=str, default=None)
+    parser.add_argument("--export-dir", type=str, default=None)
+    parser.add_argument("--config-dir", type=str, default=None,
+                        help="Directory for per-experiment run_config.yaml files")
+    parser.add_argument("--registry", type=str, default=None,
+                        help="Path to registry.yaml with dataset/model paths")
     parser.add_argument("--max-iterations", type=int, help="Max iterations (for testing)")
     
     args = parser.parse_args()
     
+    # Load config to get paths (config file paths take precedence over defaults)
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Priority: CLI arg > config file > default
+    def resolve_path(cli_val, config_key, default_val):
+        if cli_val is not None:
+            return cli_val
+        if config_key in config and config[config_key]:
+            return config[config_key]
+        return str(default_val)
+    
     supervisor = SupervisorV2(
         config_path=args.config,
-        slurm_dir=args.slurm_dir,
-        output_dir=args.output_dir,
-        log_dir=args.log_dir,
-        state_dir=args.state_dir,
-        export_dir=args.export_dir,
+        slurm_dir=resolve_path(args.slurm_dir, 'slurm_dir', DEFAULT_SLURM_DIR),
+        output_dir=resolve_path(args.output_dir, 'output_dir', DEFAULT_OUTPUT_DIR),
+        log_dir=resolve_path(args.log_dir, 'log_dir', DEFAULT_LOG_DIR),
+        state_dir=resolve_path(args.state_dir, 'state_dir', DEFAULT_STATE_DIR),
+        export_dir=resolve_path(args.export_dir, 'export_dir', DEFAULT_EXPORT_DIR),
+        config_dir=resolve_path(args.config_dir, 'config_dir', DEFAULT_CONFIG_DIR),
+        registry_path=resolve_path(args.registry, 'registry_path', DEFAULT_REGISTRY_PATH),
     )
     
     supervisor.run(max_iterations=args.max_iterations)

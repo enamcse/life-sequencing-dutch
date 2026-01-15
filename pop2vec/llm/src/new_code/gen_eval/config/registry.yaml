@@ -1,0 +1,103 @@
+# Dataset and Model Registry for Generative Evaluation
+#
+# This file maps dataset names and model names to their actual file paths.
+# The supervisor uses this to generate the correct run_config.yaml for each experiment.
+#
+# IMPORTANT: Fill in all paths before running the supervisor!
+#
+# Usage:
+#   The supervisor reads this file to resolve:
+#   - Dataset name (GD0, GDB0, etc.) -> H5 file path
+#   - Model name (Gen-BASE, etc.) -> checkpoint path, vocab path
+
+# ============================================================================
+# Dataset Registry
+# ============================================================================
+# Maps dataset name -> H5 file path
+# After running create_generative_datasets.py, fill in the paths here
+
+datasets:
+  # Normal datasets (created from primary H5)
+  GD0: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GD0/GD0.h5
+  GD1: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GD1/GD1.h5
+  GD2: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GD2/GD2.h5
+  GD3: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GD3/GD3.h5
+  GD4: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GD4/GD4.h5
+  
+  # Birthday-token datasets (same indices, from birthday H5)
+  GDB0: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GDB0/GDB0.h5
+  GDB1: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GDB1/GDB1.h5
+  GDB2: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GDB2/GDB2.h5
+  GDB3: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GDB3/GDB3.h5
+  GDB4: null  # /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/datasets/GDB4/GDB4.h5
+
+# ============================================================================
+# Model Registry
+# ============================================================================
+# Maps model name -> checkpoint, vocab, and optionally data path overrides
+#
+# Note: If a model uses birthday datasets (GDB*), set 'uses_birthday: true'
+# This is just for documentation - the actual dataset is determined by experiment config
+
+models:
+  Gen-medium:
+    checkpoint: null  # TO BE FILLED: /path/to/gen_medium.ckpt
+    vocab: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
+    uses_birthday: false
+    description: "Medium-sized generative model (no birthday tokens)"
+  
+  Gen-BASE:
+    checkpoint: null  # TO BE FILLED: /path/to/gen_base.ckpt
+    vocab: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
+    uses_birthday: false
+    description: "BASE generative model (no birthday tokens)"
+  
+  Gen-medium-bd:
+    checkpoint: null  # TO BE FILLED: /path/to/gen_medium_bd.ckpt
+    vocab: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
+    uses_birthday: true
+    description: "Medium-sized generative model (with birthday tokens)"
+  
+  Gen-BASE-bd:
+    checkpoint: null  # TO BE FILLED: /path/to/gen_base_bd.ckpt
+    vocab: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
+    uses_birthday: true
+    description: "BASE generative model (with birthday tokens)"
+  
+  Gen-BASE-bd-partial:
+    checkpoint: null  # TO BE FILLED: /path/to/gen_base_bd_partial.ckpt
+    vocab: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
+    uses_birthday: true
+    description: "BASE generative model (partial birthday tokens)"
+
+# ============================================================================
+# Model-Dataset Compatibility Matrix
+# ============================================================================
+# Specifies which datasets each model should be evaluated on
+# 
+# Rules:
+#   - Non-birthday models (Gen-medium, Gen-BASE) use GD0-GD4
+#   - Birthday models (Gen-*-bd) use GDB0-GDB4
+#
+# If you leave this empty or null, the supervisor will use ALL datasets
+# for ALL models (which may not be what you want)
+
+model_dataset_compatibility:
+  Gen-medium: [GD0, GD1, GD2, GD3, GD4]
+  Gen-BASE: [GD0, GD1, GD2, GD3, GD4]
+  Gen-medium-bd: [GDB0, GDB1, GDB2, GDB3, GDB4]
+  Gen-BASE-bd: [GDB0, GDB1, GDB2, GDB3, GDB4]
+  Gen-BASE-bd-partial: [GDB0, GDB1, GDB2, GDB3, GDB4]
+
+# ============================================================================
+# Common Settings
+# ============================================================================
+
+# Vocabulary file (same for all models typically)
+default_vocab: /projects/0/prjs1589/stonybrook/fake_data_v0/step5/vocab_v0.csv
+
+# Special token settings
+special_tokens:
+  pad_token: "[PAD]"
+  cls_token: "[CLS]"
+  death_token: "[death]_[death]"

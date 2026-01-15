@@ -112,12 +112,28 @@ max_retries: 2
 auto_aggregate: true
 
 # ============================================================================
-# Paths (usually don't need to change)
+# Paths
 # ============================================================================
+# These paths override hardcoded defaults in supervisor_v2.py
+# Priority: CLI argument > config file > default
 
-# Uncomment to override defaults:
+# Path to registry.yaml with dataset/model paths (REQUIRED)
+registry_path: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/config/registry.yaml
+
+# Directory for generated SLURM scripts
 # slurm_dir: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/slurm_scripts
+
+# Directory for experiment outputs (generated sequences, statistics)
 # output_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval
+
+# Directory for per-experiment run_config.yaml files
+# config_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/configs
+
+# Directory for SLURM logs
 # log_dir: /projects/0/prjs1589/stonybrook/logs
+
+# Directory for supervisor state files
 # state_dir: /home/ehassan/life-sequencing-dutch/pop2vec/llm/src/new_code/gen_eval/supervisor_state
+
+# Directory for exported CSV summaries
 # export_dir: /projects/0/prjs1589/stonybrook/llm/gen_out/gen_eval/exports
