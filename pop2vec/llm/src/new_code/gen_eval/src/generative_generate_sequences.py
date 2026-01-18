@@ -113,6 +113,11 @@ class SequenceGenerator:
         self.vocab_size = len(self.vocab_df)
         logger.info(f"Vocabulary size: {self.vocab_size}")
         
+        # Log effective top_k (for k=v experiments)
+        # top_k can be None, 0, or negative to indicate full vocabulary
+        effective_k = self.config.top_k if (self.config.top_k is not None and self.config.top_k > 0) else self.vocab_size
+        logger.info(f"Sampling: top_k={self.config.top_k}, effective_k={effective_k}, temperature={config.temperature}")
+        
         # Load special tokens
         specials = load_special_ids(
             config.vocab_path,
@@ -282,14 +287,12 @@ class SequenceGenerator:
                 logits = self.model({"input_ids": x, "padding_mask": pm})
                 last_logits = logits[:, -1, :] / max(1e-8, self.config.temperature)
                 
-                # Top-k sampling
-                if self.config.top_k > 0:
-                    vals, idxs = torch.topk(last_logits, k=self.config.top_k, dim=-1)
-                    probs = softmax(vals, dim=-1)
-                    sampled_idx = torch.multinomial(probs, 1)
-                    next_tokens = idxs.gather(-1, sampled_idx).squeeze(-1)
-                else:
-                    next_tokens = torch.argmax(last_logits, dim=-1)
+                # Top-k sampling (if top_k is None, 0, or negative, use full vocabulary)
+                effective_k = self.config.top_k if (self.config.top_k is not None and self.config.top_k > 0) else self.vocab_size
+                vals, idxs = torch.topk(last_logits, k=effective_k, dim=-1)
+                probs = softmax(vals, dim=-1)
+                sampled_idx = torch.multinomial(probs, 1)
+                next_tokens = idxs.gather(-1, sampled_idx).squeeze(-1)
                 
                 # Store tokens for active sequences
                 for i in range(B):
