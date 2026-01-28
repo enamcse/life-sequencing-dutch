@@ -1223,6 +1223,12 @@ class SupervisorV2:
             if job.job_type != 'gen':
                 continue
             if job.status == JobStatus.NOT_STARTED:
+                # Check if output files already exist (from previous run)
+                if check_output_files(self.output_dir, job.experiment, 'gen'):
+                    logging.info(f"[SKIP] {job.experiment} - output files already exist")
+                    job.status = JobStatus.COMPLETED
+                    job.end_time = datetime.now().isoformat()
+                    continue
                 pending_jobs.append(job)
             elif job.status == JobStatus.FAILED:
                 if self.config.get('auto_resubmit_failed', False):
@@ -1296,6 +1302,13 @@ class SupervisorV2:
             if job.job_type != 'stats':
                 continue
             if job.status != JobStatus.NOT_STARTED:
+                continue
+            
+            # Check if output files already exist (from previous run)
+            if check_output_files(self.output_dir, job.experiment, 'stats'):
+                logging.info(f"[SKIP] Stats {job.experiment} - output files already exist")
+                job.status = JobStatus.COMPLETED
+                job.end_time = datetime.now().isoformat()
                 continue
             
             # Check if generation is complete
