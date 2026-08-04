@@ -202,6 +202,11 @@ class TransformerEncoder(pl.LightningModule):
     def forward(self, batch):
         """Forward pass"""
         if "mlm" in self.task:
+            if "target_pos" not in batch: ##DEBUG
+                logger.error(f"Missing 'target_pos' in batch. Keys found: {list(batch.keys())}")
+                if "target_tokens" in batch:
+                   logger.error(f"target_tokens shape: {batch['target_tokens'].shape}")
+
             ## 1. ENCODER INPUT
             predicted = self.transformer(
                 x=batch["input_ids"].long(),

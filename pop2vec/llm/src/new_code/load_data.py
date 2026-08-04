@@ -638,14 +638,12 @@ class CustomLazyHDF5Dataset(Dataset):
             except IndexError: # no -1 found
                 pass
             
-            sample.update(
-                original_sequence=torch.as_tensor(
-                    h5["original_sequence"][row]
-                ),
-                target_tokens=tok,
-                target_pos=pos,
-                target_cls=torch.as_tensor(h5["target_cls"][row]),
-            )
+            sample.update({
+                "original_sequence": torch.as_tensor(h5["original_sequence"][row]),
+                "target_tokens": tok,
+                "target_pos": pos,
+                "target_cls": torch.as_tensor(h5["target_cls"][row]),
+            })
 
         # 5) optionally return the sequence id
         if self.return_index:

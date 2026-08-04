@@ -114,17 +114,32 @@ def load_hparams(hparams_path: str):
 
 # Helper: Create training and validation dataloaders.
 def get_dataloaders(mlm_path, num_val_items, batch_size, use_ar, pad_id, death_id):
+    # mlm_encoded=False means we do dynamic masking on the fly or just return raw sequences
+    # However, if the HDF5 was ALREADY encoded with [MASK] and targets, we might want True or
+    # we might need to change CustomLazyHDF5Dataset logic to yield 'target_pos' even if not 'mlm_encoded' is passed.
+    # The `mlm_encoded` flag in CustomLazyHDF5Dataset controls whether it reads `target_tokens` and `target_pos`
+    # from the HDF5 file. If the HDF5 contains pre-masked data, we MUST set mlm_encoded=True
+    # so that `target_pos` is read and put into the batch.
+    
+    # If the user is running an MLM task (not AR), they typically need `target_pos` for the MLM decoder.
+    # The models.py forward pass specifically looks for `batch["target_pos"]`.
+    
+    # Let's check if we are doing AR or MLM. `use_ar` is passed in.
+    # If use_ar is False, we assume MLM.
+    
+    mlm_encoded_flag = not use_ar # If not AR, assumes MLM, so we need the pre-encoded MLM targets if available.
+    
     val_dataset = CustomLazyHDF5Dataset(
         mlm_path,
         validation=True,
         num_val_items=num_val_items,
-        mlm_encoded=False, 
+        mlm_encoded=mlm_encoded_flag, 
     )
     train_dataset = CustomLazyHDF5Dataset(
         mlm_path,
         validation=False,
         num_val_items=num_val_items,
-        mlm_encoded=False,
+        mlm_encoded=mlm_encoded_flag,
     )
     num_train_workers = max(len(os.sched_getaffinity(0)) - 3, 1)
 
@@ -252,4 +267,3 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("medium")
 
     pretrain(load_hparams(HPARAMS))
-    

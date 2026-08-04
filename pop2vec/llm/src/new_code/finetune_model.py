@@ -161,11 +161,12 @@ class TransformerFT(pl.LightningModule):
             self.train_auc = AUROC           (task="multiclass", num_classes=k, average="macro")
             self.train_mcc = MatthewsCorrCoef(task="multiclass", num_classes=k)
 
+            # clones 
             self.val_acc,  self.test_acc  = self.train_acc.clone(),  self.train_acc.clone()
             self.val_f1,   self.test_f1   = self.train_f1.clone(),   self.train_f1.clone()
-            self.val_auc,  self.test_auc  = self.train_auc.clone(),  self.train_auc.clone()
             self.val_mcc,  self.test_mcc  = self.train_mcc.clone(),  self.train_mcc.clone()
-
+            self.val_auc,  self.test_auc  = self.train_auc.clone(),  self.train_auc.clone()
+            
         elif ttype == "numeric":
             self.train_mae = torchmetrics.MeanAbsoluteError()
             self.train_mse = MeanSquaredError()
